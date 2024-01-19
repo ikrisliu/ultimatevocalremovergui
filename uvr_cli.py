@@ -331,7 +331,6 @@ class ModelData:
 
 
 class UVR:
-
     def __init__(self, input_paths: [str], export_path: str):
         self.true_model_count = 0
         self.iteration = 0
@@ -438,8 +437,7 @@ class UVR:
                         'is_4_stem_ensemble': False
                     }
 
-                    seperator = SeperateMDXC(current_model, process_data) if current_model.is_mdx_c \
-                        else SeperateMDX(current_model, process_data)
+                    seperator = SeperateMDX(current_model, process_data)
                     seperator.seperate()
 
                 clear_gpu_cache()
