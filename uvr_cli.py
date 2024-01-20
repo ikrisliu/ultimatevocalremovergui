@@ -447,8 +447,8 @@ class UVR:
             self.process_end()
 
         except Exception as ex:
-            print(ex)
             self.process_end(error=ex)
+            raise ex
 
     def process_end(self, error=None):
         self.cached_sources_clear()
