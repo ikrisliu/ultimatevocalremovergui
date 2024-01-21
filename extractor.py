@@ -14,8 +14,11 @@ from webvtt_template import WEBVTT_STYLE
 
 
 def run_duration(start: float):
-    return time.strftime("%H:%M:%S", time.gmtime(int(time.perf_counter() - start)))
-
+    elapsed_time = time.perf_counter() - start
+    hours, remainder = divmod(elapsed_time, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    milliseconds = (elapsed_time - int(elapsed_time)) * 1000
+    return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}.{int(milliseconds):03}"
 
 @dataclass
 class Timecode:
@@ -99,7 +102,7 @@ class Extractor:
         self.logger.info(f"Detecting vocal event times from vocal file: {self.vocal_file}")
         tc_seconds: [Timecode] = []
         try:
-            cmd = ffmpeg.input(self.vocal_file).output('-', af='silencedetect=noise=-10dB:d=0.4', f='null')
+            cmd = ffmpeg.input(self.vocal_file).output('-', af='silencedetect=noise=-15dB:d=0.4', f='null')
             _, out = ffmpeg.run(cmd, capture_stdout=True, capture_stderr=True)
             out = out.decode('utf-8')
 
@@ -130,7 +133,7 @@ class Extractor:
 
         try:
             for ts in tc_seconds:
-                step = 800
+                step = 300
                 s = int(ts.start * 1000)
                 e = int(ts.end * 1000)
                 ss = (dummy_date + timedelta(seconds=ts.start)).strftime("%H:%M:%S.%f")[:-3]
@@ -139,11 +142,11 @@ class Extractor:
                     ms = idx + step
                     img_file = os.path.join(ss_dir, f"{idx:010}.jpg")
                     ocr_text = self.crop_and_ocr(ss, img_file)
-                    if ocr_text == "":  # use step/2 to retry
-                        ms = idx + step / 2
-                        img_file = os.path.join(ss_dir, f"{ms:010}.jpg")
-                        ns = (dummy_date + timedelta(milliseconds=ms)).strftime("%H:%M:%S.%f")[:-3]
-                        ocr_text = self.crop_and_ocr(ns, img_file)
+                    #f ocr_text == "":  # use step/2 to retry
+                    #   ms = idx + step / 2
+                    #   img_file = os.path.join(ss_dir, f"{ms:010}.jpg")
+                    #   ns = (dummy_date + timedelta(milliseconds=ms)).strftime("%H:%M:%S.%f")[:-3]
+                    #   ocr_text = self.crop_and_ocr(ns, img_file)
 
                     # Check if it has duplicated subtitle and if it needs to update the end time
                     ee = (dummy_date + timedelta(milliseconds=ms)).strftime("%H:%M:%S.%f")[:-3]
@@ -183,8 +186,8 @@ class Extractor:
          .output(img_file, vf='crop=700:80:10:860', vframes=1, loglevel='quiet').run(overwrite_output=True))
 
         ocr = PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=True, show_log=False,
-                        det_model_dir="models/PaddleOCR/ch_PP-OCRv4_det_server_infer",
-                        rec_model_dir="models/PaddleOCR/ch_PP-OCRv4_rec_server_infer")
+                        #rec_model_dir="models/PaddleOCR/ch_PP-OCRv4_rec_server_infer",
+                        det_model_dir="models/PaddleOCR/ch_PP-OCRv4_det_server_infer")
         result = ocr.ocr(img_file, cls=False)
         self.logger.debug(f"OCR Result: {result} from image: {img_file}, at time: {start}")
         if result and result != [None]:

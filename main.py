@@ -48,7 +48,7 @@ def main():
 
     logger.info(f"Media extractor beginning with video directory: {args.video_dir}")
     start = time.perf_counter()
-    output_dir = args.output_dir[:-1] if args.output_dir.endswith("/") else args.output_dir
+    output_dir = args.video_dir[:-1] if args.video_dir.endswith("/") else args.video_dir
     output_dir = args.output_dir if args.output_dir else os.path.dirname(output_dir)
     extractor = Extractor(
         video_dir=args.video_dir,
