@@ -10,6 +10,7 @@ from itertools import chain
 from datetime import datetime, timedelta
 from uvr_cli import UVR
 from paddleocr import PaddleOCR
+from webvtt_template import WEBVTT_STYLE
 
 
 def run_duration(start: float):
@@ -36,9 +37,9 @@ class Extractor:
         self.subtitle_box = subtitle_box
         self.video_file = os.path.join(output_dir, "video.mp4")
         self.audio_file = os.path.join(output_dir, "audio.aac")
-        self.vocal_file = os.path.join(output_dir, "1_audio_(Vocals).flac")
+        self.vocal_file = os.path.join(output_dir, "1_audio_(Vocals).wav")
         self.subtitle_file = os.path.join(output_dir, "subtitle.txt")
-        self.timecode_file = os.path.join(output_dir, "timestamp.txt")
+        self.timecode_file = os.path.join(output_dir, "timecode.txt")
         self.timecodes: [Timecode] = []
         self.subtitles: [str] = []
         self.log_level = log_level
@@ -62,9 +63,10 @@ class Extractor:
                 for vc in self.video_clips:
                     file.write(f"file '{os.path.join(self.video_dir, vc)}'\n")
             ffmpeg.input(list_file, f='concat', safe=0).output(self.video_file, c='copy').run(overwrite_output=True)
-            self.logger.info(f"Merged video file: {self.video_file} with duration: {run_duration(start)}")
+            self.logger.info(f"Merged video file: {self.video_file}, with duration: {run_duration(start)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Merge video clips with error: {ex.stderr.decode('utf-8')}")
+            raise ex
         finally:
             os.remove(list_file)
 
@@ -73,9 +75,10 @@ class Extractor:
         self.logger.info(f"Separating audio from video")
         try:
             ffmpeg.input(self.video_file).output(self.audio_file, acodec='acc', c='copy').run(overwrite_output=True)
-            self.logger.info(f"Separated audio file: {self.audio_file} with duration: {run_duration(start)}")
+            self.logger.info(f"Separated audio file: {self.audio_file}, with duration: {run_duration(start)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Separate audio from video with error: {ex.stderr.decode('utf-8')}")
+            raise ex
 
     def separate_vocal(self):
         start = time.perf_counter()
@@ -86,9 +89,10 @@ class Extractor:
                 export_path=self.output_dir,
             )
             uvr.process_start()
-            self.logger.info(f"Separated vocal file: {self.vocal_file} with duratoin: {run_duration(start)}")
+            self.logger.info(f"Separated vocal file: {self.vocal_file}, with duratoin: {run_duration(start)}")
         except Exception as ex:
             self.logger.error(f"Separate vocal with error: {ex}")
+            raise ex
 
     def detect_audio_timecode(self):
         start_time = time.perf_counter()
@@ -110,6 +114,7 @@ class Extractor:
             self.logger.info(f"Detected vocal event times with duration: {run_duration(start_time)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Detect vocal event times with exception: {ex.stderr.decode('utf-8')}")
+            raise ex
 
         return tc_seconds
 
@@ -145,11 +150,6 @@ class Extractor:
                     if ocr_text and ocr_text != "":
                         last_sub = self.subtitles[-1] if len(self.subtitles) > 0 else None
                         if ocr_text != last_sub:
-                            # if last_sub and last_sub in ocr_text:
-                            #     self.subtitles.remove(last_sub)
-                            #     pre = self.timestamps[-1]
-                            #     pre.end = ee
-                            # else:
                             self.timecodes.append(Timecode(ss, ee))
                             self.subtitles.append(ocr_text)
                         elif len(self.timecodes) > 0:
@@ -166,12 +166,14 @@ class Extractor:
                     file.write(f"{sub}\n")
 
             self.logger.debug(f"OCR subtitles text in file: {self.subtitle_file}")
-            self.logger.debug(f"Updated event timestamps in file: {self.timecode_file}")
-            self.logger.info(f"Process timestamps and subtitles with duration: {run_duration(start)}")
+            self.logger.debug(f"Updated event timecodes in file: {self.timecode_file}")
+            self.logger.info(f"Process timecodes and subtitles with duration: {run_duration(start)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Crop video with error: {ex.stderr}")
+            raise ex
         except Exception as ex:
             self.logger.error(f"OCR subtitle with error: {ex}")
+            raise ex
         finally:
             pass
 
@@ -180,16 +182,19 @@ class Extractor:
         (ffmpeg.input(self.video_file, ss=start)
          .output(img_file, vf='crop=700:80:10:860', vframes=1, loglevel='quiet').run(overwrite_output=True))
 
-        ocr = PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=True, show_log=False)
+        ocr = PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=True, show_log=False,
+                        det_model_dir="models/PaddleOCR/ch_PP-OCRv4_det_server_infer",
+                        rec_model_dir="models/PaddleOCR/ch_PP-OCRv4_rec_server_infer")
         result = ocr.ocr(img_file, cls=False)
         self.logger.debug(f"OCR Result: {result} from image: {img_file}, at time: {start}")
         if result and result != [None]:
             # [[[[[191.0, 10.0], [511.0, 10.0], [511.0, 49.0], [191.0, 49.0]], ('你好吗', 0.99381166696)]]]
             result = list(chain.from_iterable(result))
             result = list(chain.from_iterable(result))
-            for line in reversed(result):
-                ocr_text = line[0]
-                break
+            for idx, line in enumerate(result):
+                if idx == 1:
+                    ocr_text = line[0]
+                    break
         return ocr_text
 
     def translate_subtitle(self):
@@ -198,17 +203,19 @@ class Extractor:
         langs = ["chinese"]
         try:
             for lang in langs:
-                srt_name = os.path.join(self.output_dir, f"{lang}.srt")
+                srt_name = os.path.join(self.output_dir, f"{lang}.vtt")
                 with open(srt_name, 'w') as file:
+                    file.write("WEBVTT\n")
+                    file.write(WEBVTT_STYLE)
                     for idx, sub in enumerate(self.subtitles):
                         if len(self.timecodes) >= idx + 1:
                             ts = self.timecodes[idx]
-                            file.write(f"{idx+1}\n")
                             file.write(f"{ts.start} --> {ts.end}\n")
                             file.write(f"{sub}\n\n")
-            self.logger.info(f"Translation complete and save all *.srt files in directory: {self.output_dir}")
+            self.logger.info(f"Translation complete in directory: {self.output_dir}, with duration: {run_duration(start)}")
         except Exception as ex:
             self.logger.error(f"Translate subtitle with error: {ex}")
+            raise ex
 
     def get_logger(self):
         logger = logging.getLogger(__name__)

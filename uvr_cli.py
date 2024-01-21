@@ -79,7 +79,7 @@ class ModelData:
         self.wav_type_set = 'PCM_16'
         self.device_set = '0'
         self.mp3_bit_set = '320k'
-        self.save_format = 'FLAC'
+        self.save_format = 'WAV'
         self.is_invert_spec = False
         self.is_mixer_mode = False
         self.demucs_stems = ALL_STEMS
