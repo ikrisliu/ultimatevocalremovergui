@@ -17,7 +17,7 @@ def run_duration(start: float):
 
 
 @dataclass
-class EventTime:
+class Timecode:
     start: str
     end: str
 
@@ -38,20 +38,19 @@ class Extractor:
         self.audio_file = os.path.join(output_dir, "audio.aac")
         self.vocal_file = os.path.join(output_dir, "1_audio_(Vocals).flac")
         self.subtitle_file = os.path.join(output_dir, "subtitle.txt")
-        self.timestamp_file = os.path.join(output_dir, "timestamp.txt")
-        self.time_seconds: [EventTime] = []
-        self.timestamps: [EventTime] = []
+        self.timecode_file = os.path.join(output_dir, "timestamp.txt")
+        self.timecodes: [Timecode] = []
         self.subtitles: [str] = []
         self.log_level = log_level
         self.log_formatter = log_formatter
         self.logger = self.get_logger()
 
     def start(self):
-        # self.merge_videos()
-        # self.separate_audio()
-        # self.separate_vocal()
-        self.detect_audio_times()
-        self.ocr_subtitle()
+        self.merge_videos()
+        self.separate_audio()
+        self.separate_vocal()
+        tc = self.detect_audio_timecode()
+        self.ocr_subtitle(tc)
         self.translate_subtitle()
 
     def merge_videos(self):
@@ -91,9 +90,10 @@ class Extractor:
         except Exception as ex:
             self.logger.error(f"Separate vocal with error: {ex}")
 
-    def detect_audio_times(self):
+    def detect_audio_timecode(self):
         start_time = time.perf_counter()
         self.logger.info(f"Detecting vocal event times from vocal file: {self.vocal_file}")
+        tc_seconds: [Timecode] = []
         try:
             cmd = ffmpeg.input(self.vocal_file).output('-', af='silencedetect=noise=-10dB:d=0.4', f='null')
             _, out = ffmpeg.run(cmd, capture_stdout=True, capture_stderr=True)
@@ -104,17 +104,18 @@ class Extractor:
             matches = pattern.findall(out)
             for match in matches:
                 start, end = map(float, match)
-                self.time_seconds.append(EventTime(start, end))
+                tc_seconds.append(Timecode(start, end))
 
-            self.logger.debug(self.time_seconds)
+            self.logger.debug(tc_seconds)
             self.logger.info(f"Detected vocal event times with duration: {run_duration(start_time)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Detect vocal event times with exception: {ex.stderr.decode('utf-8')}")
 
-    def ocr_subtitle(self):
+        return tc_seconds
+
+    def ocr_subtitle(self, tc_seconds: [Timecode]):
         start = time.perf_counter()
         self.logger.info(f"OCR subtitle from video: {self.video_file}")
-        ocr_text = ""
         dummy_date = datetime(1900, 1, 1)
 
         ss_dir = os.path.join(self.output_dir, "screenshots")
@@ -123,7 +124,7 @@ class Extractor:
         os.makedirs(ss_dir)
 
         try:
-            for ts in self.time_seconds:
+            for ts in tc_seconds:
                 step = 800
                 s = int(ts.start * 1000)
                 e = int(ts.end * 1000)
@@ -149,15 +150,15 @@ class Extractor:
                             #     pre = self.timestamps[-1]
                             #     pre.end = ee
                             # else:
-                            self.timestamps.append(EventTime(ss, ee))
+                            self.timecodes.append(Timecode(ss, ee))
                             self.subtitles.append(ocr_text)
-                        elif len(self.timestamps) > 0:
-                            pre = self.timestamps[-1]
+                        elif len(self.timecodes) > 0:
+                            pre = self.timecodes[-1]
                             pre.end = ee
                     ss = ee
 
-            with open(self.timestamp_file, 'w') as file:
-                for ts in self.timestamps:
+            with open(self.timecode_file, 'w') as file:
+                for ts in self.timecodes:
                     file.write(f"{ts.start} --> {ts.end}\n")
 
             with open(self.subtitle_file, 'w') as file:
@@ -165,7 +166,7 @@ class Extractor:
                     file.write(f"{sub}\n")
 
             self.logger.debug(f"OCR subtitles text in file: {self.subtitle_file}")
-            self.logger.debug(f"Updated event timestamps in file: {self.timestamp_file}")
+            self.logger.debug(f"Updated event timestamps in file: {self.timecode_file}")
             self.logger.info(f"Process timestamps and subtitles with duration: {run_duration(start)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Crop video with error: {ex.stderr}")
@@ -200,8 +201,8 @@ class Extractor:
                 srt_name = os.path.join(self.output_dir, f"{lang}.srt")
                 with open(srt_name, 'w') as file:
                     for idx, sub in enumerate(self.subtitles):
-                        if len(self.timestamps) >= idx + 1:
-                            ts = self.timestamps[idx]
+                        if len(self.timecodes) >= idx + 1:
+                            ts = self.timecodes[idx]
                             file.write(f"{idx+1}\n")
                             file.write(f"{ts.start} --> {ts.end}\n")
                             file.write(f"{sub}\n\n")
