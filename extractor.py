@@ -130,9 +130,6 @@ class Extractor:
     def ocr_subtitle(self, tc_seconds: [Timecode]):
         start_time = time.perf_counter()
         self.logger.info(f"OCR subtitle from video: {self.video_file}")
-        delay = 0.2  # Start cropping by delay 0.2 seconds
-        loop_step = 0.3  # Loop step with delay 0.3 seconds
-        vocal_rate = 0.15  # Say one word per 0.15 seconds
 
         ss_dir = os.path.join(self.output_dir, "screenshots")
         if os.path.exists(ss_dir):
@@ -140,10 +137,14 @@ class Extractor:
         os.makedirs(ss_dir)
 
         try:
+            delay = 0.2  # Start cropping by delay 0.2 seconds
+            vocal_rate = 0.15  # Say one word per 0.15 seconds
             for ts in tc_seconds:
                 idx = 0
                 next_start = ts.start
                 while next_start < ts.end:
+                    loop_interval = 0.3  # Loop interval with 0.3 seconds
+
                     ss = next_start if idx >= 0 else next_start + delay
                     fid = int(ss * 1000)
                     img_file = os.path.join(ss_dir, f"{fid:010}.jpg")
@@ -152,19 +153,17 @@ class Extractor:
                     if ocr_text and ocr_text != "":
                         last_sub = self.subtitles[-1] if len(self.subtitles) > 0 else None
                         if ocr_text != last_sub:
-                            ss = next_start
-                            next_start += len(ocr_text) * vocal_rate
-                            end = next_start if next_start < ts.end else ts.end
+                            loop_interval = len(ocr_text) * vocal_rate
+                            end = next_start if next_start + loop_interval < ts.end else ts.end
                             self.subtitles.append(ocr_text)
-                            self.timecodes.append(Timecode(format_time(ss), format_time(end)))
+                            self.timecodes.append(Timecode(format_time(next_start), format_time(end)))
                         elif len(self.timecodes) > 0:
-                            next_start += loop_step
-                            end = next_start if next_start < ts.end else ts.end
+                            end = next_start if next_start + loop_interval < ts.end else ts.end
                             pre = self.timecodes[-1]
                             pre.end = format_time(end)
-                    else:
-                        next_start += loop_step
+
                     idx += 1
+                    next_start += loop_interval
 
             with open(self.timecode_file, 'w') as file:
                 for ts in self.timecodes:
