@@ -108,7 +108,7 @@ class Extractor:
         self.logger.info(f"Detecting vocal event times from vocal file: {self.vocal_file}")
         tc_seconds: [Timecode] = []
         try:
-            cmd = ffmpeg.input(self.vocal_file).output('-', af='silencedetect=noise=-15dB:d=0.4', f='null')
+            cmd = ffmpeg.input(self.vocal_file).output('-', af='silencedetect=noise=-10dB:d=0.4', f='null')
             _, out = ffmpeg.run(cmd, capture_stdout=True, capture_stderr=True)
             out = out.decode('utf-8')
 
