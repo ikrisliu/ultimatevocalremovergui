@@ -108,7 +108,7 @@ class Extractor:
         self.logger.info(f"Detecting vocal event times from vocal file: {self.vocal_file}")
         tc_seconds: [Timecode] = []
         try:
-            cmd = ffmpeg.input(self.vocal_file).output('-', af='silencedetect=noise=-10dB:d=0.4', f='null')
+            cmd = ffmpeg.input(self.vocal_file).output('-', af='silencedetect=noise=-15dB:d=0.4', f='null')
             _, out = ffmpeg.run(cmd, capture_stdout=True, capture_stderr=True)
             out = out.decode('utf-8')
 
@@ -137,32 +137,43 @@ class Extractor:
         os.makedirs(ss_dir)
 
         try:
-            delay = 0.2  # Start cropping by delay 0.2 seconds
-            vocal_rate = 0.15  # Say one word per 0.15 seconds
+            vocal_rate = 0.15  # Say one word in seconds
+            min_duration = 0.5  # Subtitle display minimum duration
             for ts in tc_seconds:
-                idx = 0
                 next_start = ts.start
                 while next_start < ts.end:
-                    loop_interval = 0.3  # Loop interval with 0.3 seconds
+                    add_timecode = False
+                    loop_interval = 0.3  # Loop interval in seconds
+                    curr_start = next_start
 
-                    ss = next_start if idx >= 0 else next_start + delay
-                    fid = int(ss * 1000)
-                    img_file = os.path.join(ss_dir, f"{fid:010}.jpg")
-                    ocr_text = self.crop_and_ocr(format_time(ss), img_file)
+                    name = int(curr_start * 1000)
+                    img_file = os.path.join(ss_dir, f"{name:010}.jpg")
+                    ocr_text = self.crop_and_ocr(format_time(curr_start), img_file)
 
                     if ocr_text and ocr_text != "":
                         last_sub = self.subtitles[-1] if len(self.subtitles) > 0 else None
                         if ocr_text != last_sub:
+                            add_timecode = True
                             loop_interval = len(ocr_text) * vocal_rate
-                            end = next_start if next_start + loop_interval < ts.end else ts.end
-                            self.subtitles.append(ocr_text)
-                            self.timecodes.append(Timecode(format_time(next_start), format_time(end)))
-                        elif len(self.timecodes) > 0:
-                            end = next_start if next_start + loop_interval < ts.end else ts.end
-                            pre = self.timecodes[-1]
-                            pre.end = format_time(end)
+                            curr_end = curr_start + loop_interval
+                            curr_end = curr_end if curr_end < ts.end else ts.end
 
-                    idx += 1
+                            # Make sure subtitle display duration is not less than 0.5 seconds
+                            d = curr_end - curr_start
+                            ss = curr_start if d > min_duration else curr_start - (min_duration - d)
+
+                            self.subtitles.append(ocr_text)
+                            self.timecodes.append(Timecode(format_time(ss), format_time(curr_end)))
+
+                    if not add_timecode and len(self.timecodes) > 0:
+                        pre = self.timecodes[-1]
+                        if format_time(ts.start) < pre.end:
+                            curr_end = curr_start + loop_interval
+                            curr_end = curr_end if curr_end < ts.end else ts.end
+                            pre.end = format_time(curr_end)
+                        else:
+                            pass  # It means begin next timecode loop
+
                     next_start += loop_interval
 
             with open(self.timecode_file, 'w') as file:
