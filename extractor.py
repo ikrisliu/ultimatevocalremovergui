@@ -20,6 +20,12 @@ def run_duration(start: float):
     milliseconds = (elapsed_time - int(elapsed_time)) * 1000
     return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}.{int(milliseconds):03}"
 
+
+def format_time(seconds: float):
+    dummy_date = datetime(1900, 1, 1)
+    return (dummy_date + timedelta(seconds=seconds)).strftime("%H:%M:%S.%f")[:-3]
+
+
 @dataclass
 class Timecode:
     start: str
@@ -50,9 +56,9 @@ class Extractor:
         self.logger = self.get_logger()
 
     def start(self):
-        self.merge_videos()
-        self.separate_audio()
-        self.separate_vocal()
+        # self.merge_videos()
+        # self.separate_audio()
+        # self.separate_vocal()
         tc = self.detect_audio_timecode()
         self.ocr_subtitle(tc)
         self.translate_subtitle()
@@ -92,7 +98,7 @@ class Extractor:
                 export_path=self.output_dir,
             )
             uvr.process_start()
-            self.logger.info(f"Separated vocal file: {self.vocal_file}, with duratoin: {run_duration(start)}")
+            self.logger.info(f"Separated vocal file: {self.vocal_file}, with duration: {run_duration(start)}")
         except Exception as ex:
             self.logger.error(f"Separate vocal with error: {ex}")
             raise ex
@@ -122,9 +128,11 @@ class Extractor:
         return tc_seconds
 
     def ocr_subtitle(self, tc_seconds: [Timecode]):
-        start = time.perf_counter()
+        start_time = time.perf_counter()
         self.logger.info(f"OCR subtitle from video: {self.video_file}")
-        dummy_date = datetime(1900, 1, 1)
+        delay = 0.2  # Start cropping by delay 0.2 seconds
+        loop_step = 0.3  # Loop step with delay 0.3 seconds
+        vocal_rate = 0.15  # Say one word per 0.15 seconds
 
         ss_dir = os.path.join(self.output_dir, "screenshots")
         if os.path.exists(ss_dir):
@@ -133,32 +141,30 @@ class Extractor:
 
         try:
             for ts in tc_seconds:
-                step = 300
-                s = int(ts.start * 1000)
-                e = int(ts.end * 1000)
-                ss = (dummy_date + timedelta(seconds=ts.start)).strftime("%H:%M:%S.%f")[:-3]
-                # Crop one screenshot per 800 milliseconds
-                for idx in range(s, e, step):
-                    ms = idx + step
-                    img_file = os.path.join(ss_dir, f"{idx:010}.jpg")
-                    ocr_text = self.crop_and_ocr(ss, img_file)
-                    #f ocr_text == "":  # use step/2 to retry
-                    #   ms = idx + step / 2
-                    #   img_file = os.path.join(ss_dir, f"{ms:010}.jpg")
-                    #   ns = (dummy_date + timedelta(milliseconds=ms)).strftime("%H:%M:%S.%f")[:-3]
-                    #   ocr_text = self.crop_and_ocr(ns, img_file)
+                idx = 0
+                next_start = ts.start
+                while next_start < ts.end:
+                    ss = next_start if idx >= 0 else next_start + delay
+                    fid = int(ss * 1000)
+                    img_file = os.path.join(ss_dir, f"{fid:010}.jpg")
+                    ocr_text = self.crop_and_ocr(format_time(ss), img_file)
 
-                    # Check if it has duplicated subtitle and if it needs to update the end time
-                    ee = (dummy_date + timedelta(milliseconds=ms)).strftime("%H:%M:%S.%f")[:-3]
                     if ocr_text and ocr_text != "":
                         last_sub = self.subtitles[-1] if len(self.subtitles) > 0 else None
                         if ocr_text != last_sub:
-                            self.timecodes.append(Timecode(ss, ee))
+                            ss = next_start
+                            next_start += len(ocr_text) * vocal_rate
+                            end = next_start if next_start < ts.end else ts.end
                             self.subtitles.append(ocr_text)
+                            self.timecodes.append(Timecode(format_time(ss), format_time(end)))
                         elif len(self.timecodes) > 0:
+                            next_start += loop_step
+                            end = next_start if next_start < ts.end else ts.end
                             pre = self.timecodes[-1]
-                            pre.end = ee
-                    ss = ee
+                            pre.end = format_time(end)
+                    else:
+                        next_start += loop_step
+                    idx += 1
 
             with open(self.timecode_file, 'w') as file:
                 for ts in self.timecodes:
@@ -170,7 +176,7 @@ class Extractor:
 
             self.logger.debug(f"OCR subtitles text in file: {self.subtitle_file}")
             self.logger.debug(f"Updated event timecodes in file: {self.timecode_file}")
-            self.logger.info(f"Process timecodes and subtitles with duration: {run_duration(start)}")
+            self.logger.info(f"Process timecodes and subtitles with duration: {run_duration(start_time)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Crop video with error: {ex.stderr}")
             raise ex
@@ -183,10 +189,10 @@ class Extractor:
     def crop_and_ocr(self, start: str, img_file: str):
         ocr_text = ""
         (ffmpeg.input(self.video_file, ss=start)
-         .output(img_file, vf='crop=700:80:10:860', vframes=1, loglevel='quiet').run(overwrite_output=True))
+         .output(img_file, vf='crop=700:100:10:850', vframes=1, loglevel='quiet').run(overwrite_output=True))
 
         ocr = PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=True, show_log=False,
-                        #rec_model_dir="models/PaddleOCR/ch_PP-OCRv4_rec_server_infer",
+                        rec_model_dir="models/PaddleOCR/ch_PP-OCRv4_rec_server_infer",
                         det_model_dir="models/PaddleOCR/ch_PP-OCRv4_det_server_infer")
         result = ocr.ocr(img_file, cls=False)
         self.logger.debug(f"OCR Result: {result} from image: {img_file}, at time: {start}")
@@ -215,7 +221,7 @@ class Extractor:
                             ts = self.timecodes[idx]
                             file.write(f"{ts.start} --> {ts.end}\n")
                             file.write(f"{sub}\n\n")
-            self.logger.info(f"Translation complete in directory: {self.output_dir}, with duration: {run_duration(start)}")
+            self.logger.info(f"Translation complete in dir: {self.output_dir}, with duration: {run_duration(start)}")
         except Exception as ex:
             self.logger.error(f"Translate subtitle with error: {ex}")
             raise ex
