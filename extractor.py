@@ -108,7 +108,7 @@ class Extractor:
 
     def detect_audio_timecode(self):
         start_time = time.perf_counter()
-        self.logger.info(f"Detecting vocal event times from vocal file: {self.vocal_file}")
+        self.logger.info(f"Detecting vocal timecodes from vocal file: {self.vocal_file}")
         tc_seconds: [Timecode] = []
         try:
             cmd = ffmpeg.input(self.vocal_file).output('-', af='silencedetect=noise=-15dB:d=0.4', f='null')
@@ -122,10 +122,15 @@ class Extractor:
                 start, end = map(float, match)
                 tc_seconds.append(Timecode(start, end))
 
+            with open(self.timecode_file, 'w') as file:
+                for ts in tc_seconds:
+                    file.write(f"{ts.start} --> {ts.end}\n")
+
             self.logger.debug(tc_seconds)
-            self.logger.info(f"Detected vocal event times with duration: {run_duration(start_time)}")
+            self.logger.info(f"Detected vocal timecodes in file: {self.timecode_file}, "
+                             f"with duration: {run_duration(start_time)}")
         except ffmpeg.Error as ex:
-            self.logger.error(f"Detect vocal event times with exception: {ex.stderr.decode('utf-8')}")
+            self.logger.error(f"Detect vocal timecodes with exception: {ex.stderr.decode('utf-8')}")
             raise ex
 
         return tc_seconds
@@ -140,11 +145,18 @@ class Extractor:
         os.makedirs(ss_dir)
 
         try:
+            st = time.perf_counter()
             chunk_size = 10
             chunks = [tc_seconds[i:i + chunk_size] for i in range(0, len(tc_seconds), chunk_size)]
+            self.logger.info(f"Cropping images by batch ...")
             with multiprocessing.Pool() as pool:
-                texts = pool.map(self.crop_and_ocr, chunks)
-            self.subtitles = [text for chunk_text in texts for text in chunk_text]
+                img_files = pool.map(self.crop_images, chunks)
+            img_files = [file for chunk_file in img_files for file in chunk_file]
+            self.logger.info(f"Cropped images by batch with duration: {run_duration(st)}")
+
+            self.subtitles = self.do_ocr(img_files, tc_seconds)
+            # for idx, text in enumerate(self.subtitles):
+
 
             # vocal_rate = 0.15  # Say one word in seconds
             # min_duration = 0.5  # Subtitle display minimum duration
@@ -182,10 +194,6 @@ class Extractor:
             #
             #         next_start += loop_interval
 
-            # with open(self.timecode_file, 'w') as file:
-            #     for ts in self.timecodes:
-            #         file.write(f"{ts.start} --> {ts.end}\n")
-
             with open(self.subtitle_file, 'w') as file:
                 for sub in self.subtitles:
                     file.write(f"{sub}\n")
@@ -213,14 +221,12 @@ class Extractor:
             file = self.output_filename(tc.start)
             output_files.append(file)
             ss = f"{tc.start}"
-            cmd.extend(["-ss", ss, "-vf", "crop=700:100:10:85", "-vframes", "1", "-loglevel", "quiet", file, "-y"])
+            cmd.extend(["-ss", ss, "-vf", "crop=700:100:10:850", "-vframes", "1", "-loglevel", "quiet", file, "-y"])
         subprocess.run(cmd)
         return output_files
 
-    def crop_and_ocr(self, timecodes: [Timecode]):
+    def do_ocr(self, img_files: [str], timecodes: [Timecode]):
         ocr_texts = []
-        img_files = self.crop_images(timecodes)
-
         ocr = PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=True, show_log=False,
                         rec_model_dir="models/PaddleOCR/ch_PP-OCRv4_rec_server_infer",
                         det_model_dir="models/PaddleOCR/ch_PP-OCRv4_det_server_infer")
