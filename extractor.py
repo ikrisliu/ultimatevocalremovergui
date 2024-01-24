@@ -113,7 +113,7 @@ class Extractor:
 
         start_time = time.perf_counter()
         try:
-            cmd = ffmpeg.input(self.vocal_file).output('-', af='silencedetect=noise=-15dB:d=0.4', f='null')
+            cmd = ffmpeg.input(self.vocal_file).output('-', af='silencedetect=noise=-10dB:d=0.4', f='null')
             _, out = ffmpeg.run(cmd, capture_stdout=True, capture_stderr=True)
             out = out.decode('utf-8')
 
@@ -147,106 +147,128 @@ class Extractor:
 
         start_time = time.perf_counter()
         try:
-            min_duration = 0.5  # Subtitle display minimum duration
-
-            # 1. Crop all images according to timecodes(second)
-            chunk_size = 10
-            s_seconds = list(map(lambda it: it.start, tc_seconds))
-            chunks = [s_seconds[i:i + chunk_size] for i in range(0, len(s_seconds), chunk_size)]
-
-            st = time.perf_counter()
-            self.logger.info(f"Cropping images by batch size {chunk_size} ...")
-            with multiprocessing.Pool() as pool:
-                img_files = pool.map(self.crop_images, chunks)
-            img_files = [file for chunk_file in img_files for file in chunk_file]
-            self.logger.info(f"Cropped images by batch with duration: {run_duration(st)}")
-
-            # 2. OCR texts from cropped images and further handling empty OCR texts
-            indexes = []    # To be removed indexes
-            forward_time = 0.3  # Forward time in seconds as start timecode for cropping image
+            # 1. Crop images according to timecodes(second) and do the OCR
+            img_files = self.batch_crop_images(tc_seconds)
             ocr_texts = self.do_ocr(tc_seconds, img_files)
+
+            # 2. Crop images according to segmented timecodes (segment timecodes by a constant interval)
+            segment_times = []
+            vocal_rate = 0.15       # Say one word in seconds
+            loop_interval = 0.3     # Loop interval in seconds
+            min_duration = 0.5      # Subtitle display minimum duration
+            forward_time = 0.3      # Forward time in seconds as start timecode for cropping image
+            invalid_interval = 3.0
 
             for idx, text in enumerate(ocr_texts):
                 tc = tc_seconds[idx]
+                start = tc.start
+                duration = tc.end - tc.start
 
                 if text != "":
-                    if idx > 0:
-                        pre_text = ocr_texts[idx - 1]
-                        if text == pre_text:
-                            pre_tc = tc_seconds[idx - 1]
-                            pre_tc.end = tc.end
-                            indexes.append(idx)
-                    continue
-
-                start = tc.start
-                if tc.end - tc.start > min_duration:
-                    start += forward_time
-                else:   # Make sure subtitle display duration is not less than `min_duration` seconds
-                    start -= min_duration
-                    start = start if idx > 0 and tc_seconds[idx-1].end < start else tc.start
-                    tc.start = start
-
-                t = self.crop_and_ocr(start)
-                if t != "":
-                    if idx == 0:
-                        ocr_texts[idx] = t
+                    if duration - len(text) * vocal_rate < min_duration:
                         continue
-                    pre_text = ocr_texts[idx - 1]
-                    if t != pre_text:
-                        ocr_texts[idx] = t
                     else:
-                        pre_tc = tc_seconds[idx - 1]
-                        pre_tc.end = tc.end
-                        indexes.append(idx)
+                        start += len(text) * vocal_rate
                 else:
-                    indexes.append(idx)
+                    if tc.end - tc.start >= invalid_interval:
+                        continue
 
-            ocr_texts = [it for index, it in enumerate(ocr_texts) if index not in indexes]
-            tc_seconds = [it for index, it in enumerate(tc_seconds) if index not in indexes]
+                    if tc.end - tc.start > min_duration:
+                        start += forward_time
+                    else:   # Make sure subtitle display duration is not less than `min_duration` seconds
+                        start -= min_duration
+                        start = start if idx > 0 and tc_seconds[idx-1].end < start else tc.start
 
-            # 3. Further OCR text handling (May have multiple subtitles between start and end timecode)
-            vocal_rate = 0.15  # Say one word in seconds
-            for idx, tc in enumerate(tc_seconds):
-                loop_interval = 0.3  # Loop interval in seconds
-                ocr_text = ocr_texts[idx]
-                next_start = tc.start + len(ocr_text) * vocal_rate
-                curr_end = next_start if next_start + loop_interval < tc.end else tc.end
-                timecode = Timecode(format_time(tc.start), format_time(curr_end))
+                while start < tc.end:
+                    end = start + loop_interval
+                    segment_times.append(Timecode(start, end))
+                    start = end
 
-                self.subtitles.append(ocr_text)
-                self.timecodes.append(timecode)
+            self.batch_crop_images(segment_times)
 
-                if next_start + loop_interval >= tc.end:
-                    continue
+            # 3. Further OCR text handling (Duplicated or empty subtitles)
 
-                while next_start < tc.end:
-                    add_timecode = False
-                    loop_interval = 0.3
-                    curr_start = next_start
-                    text = self.crop_and_ocr(curr_start)
-
-                    if text != "":
-                        last_sub = self.subtitles[-1] if len(self.subtitles) > 0 else None
-                        if text != last_sub:
-                            add_timecode = True
-                            loop_interval = len(text) * vocal_rate
-                            curr_end = curr_start + loop_interval
-                            curr_end = curr_end if curr_end < tc.end else tc.end
-
-                            # Make sure subtitle display duration is not less than `min_duration` seconds
-                            d = curr_end - curr_start
-                            ss = curr_start if d > min_duration else curr_start - (min_duration - d)
-                            timecode = Timecode(format_time(ss), format_time(curr_end))
-                            self.subtitles.append(text)
-                            self.timecodes.append(timecode)
-
-                    if not add_timecode and len(self.timecodes) > 0:
-                        pre = self.timecodes[-1]
-                        curr_end = curr_start + loop_interval
-                        curr_end = curr_end if curr_end < tc.end else tc.end
-                        pre.end = format_time(curr_end)
-
-                    next_start += loop_interval
+            # for idx, text in enumerate(ocr_texts):
+            #     tc = tc_seconds[idx]
+            #
+            #     if text != "":
+            #         if idx > 0:
+            #             pre_text = ocr_texts[idx - 1]
+            #             if text == pre_text:
+            #                 pre_tc = tc_seconds[idx - 1]
+            #                 pre_tc.end = tc.end
+            #                 indexes.append(idx)
+            #         continue
+            #
+            #     start = tc.start
+            #     if tc.end - tc.start > min_duration:
+            #         start += forward_time
+            #     else:   # Make sure subtitle display duration is not less than `min_duration` seconds
+            #         start -= min_duration
+            #         start = start if idx > 0 and tc_seconds[idx-1].end < start else tc.start
+            #         tc.start = start
+            #
+            #     t = self.crop_and_ocr(start)
+            #     if t != "":
+            #         if idx == 0:
+            #             ocr_texts[idx] = t
+            #             continue
+            #         pre_text = ocr_texts[idx - 1]
+            #         if t != pre_text:
+            #             ocr_texts[idx] = t
+            #         else:
+            #             pre_tc = tc_seconds[idx - 1]
+            #             pre_tc.end = tc.end
+            #             indexes.append(idx)
+            #     else:
+            #         indexes.append(idx)
+            #
+            # ocr_texts = [it for index, it in enumerate(ocr_texts) if index not in indexes]
+            # tc_seconds = [it for index, it in enumerate(tc_seconds) if index not in indexes]
+            #
+            # # 3. Further OCR text handling (May have multiple subtitles between start and end timecode)
+            # vocal_rate = 0.15  # Say one word in seconds
+            # for idx, tc in enumerate(tc_seconds):
+            #     loop_interval = 0.3  # Loop interval in seconds
+            #     ocr_text = ocr_texts[idx]
+            #     next_start = tc.start + len(ocr_text) * vocal_rate
+            #     curr_end = next_start if next_start + loop_interval < tc.end else tc.end
+            #     timecode = Timecode(format_time(tc.start), format_time(curr_end))
+            #
+            #     self.subtitles.append(ocr_text)
+            #     self.timecodes.append(timecode)
+            #
+            #     if next_start + loop_interval >= tc.end:
+            #         continue
+            #
+            #     while next_start < tc.end:
+            #         add_timecode = False
+            #         loop_interval = 0.3
+            #         curr_start = next_start
+            #         text = self.crop_and_ocr(curr_start)
+            #
+            #         if text != "":
+            #             last_sub = self.subtitles[-1] if len(self.subtitles) > 0 else None
+            #             if text != last_sub:
+            #                 add_timecode = True
+            #                 loop_interval = len(text) * vocal_rate
+            #                 curr_end = curr_start + loop_interval
+            #                 curr_end = curr_end if curr_end < tc.end else tc.end
+            #
+            #                 # Make sure subtitle display duration is not less than `min_duration` seconds
+            #                 d = curr_end - curr_start
+            #                 ss = curr_start if d > min_duration else curr_start - (min_duration - d)
+            #                 timecode = Timecode(format_time(ss), format_time(curr_end))
+            #                 self.subtitles.append(text)
+            #                 self.timecodes.append(timecode)
+            #
+            #         if not add_timecode and len(self.timecodes) > 0:
+            #             pre = self.timecodes[-1]
+            #             curr_end = curr_start + loop_interval
+            #             curr_end = curr_end if curr_end < tc.end else tc.end
+            #             pre.end = format_time(curr_end)
+            #
+            #         next_start += loop_interval
 
             with open(self.subtitle_file, 'w') as file:
                 for sub in self.subtitles:
@@ -269,13 +291,28 @@ class Extractor:
 
     def crop_images(self, ss: [str]):
         output_files = []
-        cmd = ["ffmpeg", "-i", self.video_file]
+        cmd = ["ffmpeg", "-hwaccel", "cuda", "-i", self.video_file]
         for s in ss:
             file = self.image_filename(s)
             output_files.append(file)
             cmd.extend(["-ss", f"{s}", "-vf", "crop=700:100:10:850", "-vframes", "1", "-loglevel", "quiet", file, "-y"])
         subprocess.run(cmd)
+
         return output_files
+
+    def batch_crop_images(self, timecodes: [Timecode]):
+        chunk_size = 20
+        tt = list(map(lambda it: it.start + 0.1, timecodes))
+        chunks = [tt[i:i + chunk_size] for i in range(0, len(tt), chunk_size)]
+
+        start = time.perf_counter()
+        self.logger.info(f"Cropping images base on timecodes by batch size {chunk_size} ...")
+        with multiprocessing.Pool() as pool:
+            img_files = pool.map(self.crop_images, chunks)
+        img_files = [file for chunk_file in img_files for file in chunk_file]
+        self.logger.info(f"Cropped images base on timecodes with duration: {run_duration(start)}")
+
+        return img_files
 
     def do_ocr(self,  ss: [str], img_files: [str]):
         ocr_texts = []
@@ -297,9 +334,9 @@ class Extractor:
                 ocr_texts.append("")
         return ocr_texts
 
-    def crop_and_ocr(self, start: str):
-        img_files = self.crop_images([start])
-        return self.do_ocr([start], img_files)[0]
+    # def crop_and_ocr(self, start: str):
+    #     img_files = self.crop_images([start])
+    #     return self.do_ocr([start], img_files)[0]
 
     def translate_subtitle(self):
         self.logger.info(f"Translating subtitle to different languages")
