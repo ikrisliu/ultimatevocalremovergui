@@ -20,12 +20,6 @@ def main():
     parser.add_argument("video_dir", nargs="?", help="The input video files directory.", default=argparse.SUPPRESS)
 
     parser.add_argument(
-        "--log_level",
-        default="info",
-        help="Optional: logging level, e.g. info, debug, warning (default: %(default)s). Example: --log_level=debug",
-    )
-
-    parser.add_argument(
         "--output_dir",
         default=None,
         help="Optional: directory to write output files (default: <video's parent dir>). Example: --output_dir=/output"
@@ -35,6 +29,19 @@ def main():
         "--subtitle_box",
         default="700:80:10:860",
         help="Optional: cropped box of subtitle in video (default: %(default)s). Example: --subtitle_box=700:80:10:860"
+    )
+
+    parser.add_argument(
+        "--use_gpu",
+        type=lambda x: (str(x).lower() == "true"),
+        default=True,
+        help="Optional: enable GPU acceleration (default: %(default)s). Example: --use_gpu=False",
+    )
+
+    parser.add_argument(
+        "--log_level",
+        default="info",
+        help="Optional: logging level, e.g. info, debug, warning (default: %(default)s). Example: --log_level=debug",
     )
 
     args = parser.parse_args()
@@ -54,6 +61,7 @@ def main():
         video_dir=args.video_dir,
         output_dir=output_dir,
         subtitle_box=args.subtitle_box,
+        use_gpu=args.use_gpu,
         log_level=log_level,
         log_formatter=log_formatter,
     )
