@@ -73,13 +73,13 @@ class Extractor:
         self.logger.info(f"Merging multiple video files: {self.video_clips}")
         list_file = "list.txt"
 
-        start = time.perf_counter()
+        perf_start = time.perf_counter()
         try:
             with open(list_file, 'w') as file:
                 for vc in self.video_clips:
                     file.write(f"file '{os.path.join(self.video_dir, vc)}'\n")
             ffmpeg.input(list_file, f='concat', safe=0).output(self.video_file, c='copy').run(overwrite_output=True)
-            self.logger.info(f"Merged video file: {self.video_file}, with duration: {run_duration(start)}")
+            self.logger.info(f"Merged video file: {self.video_file}, with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Merge video clips with error: {ex.stderr.decode('utf-8')}")
             raise ex
@@ -88,24 +88,24 @@ class Extractor:
 
     def separate_audio(self):
         self.logger.info(f"Separating audio from video")
-        start = time.perf_counter()
+        perf_start = time.perf_counter()
         try:
             ffmpeg.input(self.video_file).output(self.audio_file, acodec='acc', c='copy').run(overwrite_output=True)
-            self.logger.info(f"Separated audio file: {self.audio_file}, with duration: {run_duration(start)}")
+            self.logger.info(f"Separated audio file: {self.audio_file}, with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Separate audio from video with error: {ex.stderr.decode('utf-8')}")
             raise ex
 
     def separate_vocal(self):
         self.logger.info(f"Separating vocal from audio file: {self.audio_file}")
-        start = time.perf_counter()
+        perf_start = time.perf_counter()
         try:
             uvr = UVR(
                 input_paths=[self.audio_file],
                 export_path=self.output_dir,
             )
             uvr.process_start()
-            self.logger.info(f"Separated vocal file: {self.vocal_file}, with duration: {run_duration(start)}")
+            self.logger.info(f"Separated vocal file: {self.vocal_file}, with duration: {run_duration(perf_start)}")
         except Exception as ex:
             self.logger.error(f"Separate vocal with error: {ex}")
             raise ex
@@ -114,9 +114,9 @@ class Extractor:
         self.logger.info(f"Detecting vocal timecodes from vocal file: {self.vocal_file}")
         tc_seconds: [Timecode] = []
 
-        start_time = time.perf_counter()
+        perf_start = time.perf_counter()
         try:
-            cmd = ffmpeg.input(self.vocal_file).output('-', af='silencedetect=noise=-10dB:d=0.4', f='null')
+            cmd = ffmpeg.input(self.vocal_file).output('-', af='silencedetect=noise=-15dB:d=0.4', f='null')
             _, out = ffmpeg.run(cmd, capture_stdout=True, capture_stderr=True)
             out = out.decode('utf-8')
 
@@ -133,7 +133,7 @@ class Extractor:
 
             self.logger.debug(tc_seconds)
             self.logger.info(f"Detected vocal timecodes in file: {self.timecode_file}, "
-                             f"with duration: {run_duration(start_time)}")
+                             f"with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Detect vocal timecodes with exception: {ex.stderr.decode('utf-8')}")
             raise ex
@@ -158,9 +158,9 @@ class Extractor:
             img_files = self.batch_crop_images(tc_seconds)
 
             self.logger.info(f"OCR images ...")
-            start = time.perf_counter()
+            perf_start = time.perf_counter()
             ocr_texts = self.do_ocr(ocr, img_files)
-            self.logger.info(f"OCR images with duration: {run_duration(start)}")
+            self.logger.info(f"OCR images with duration: {run_duration(perf_start)}")
 
             # 2. Crop images according to segmented timecodes (segment timecodes by a constant interval)
             vocal_rate = 0.15       # Say one word in seconds
@@ -169,23 +169,26 @@ class Extractor:
             forward_time = 0.3      # Forward time in seconds as start timecode for cropping image
             invalid_interval = 3.0
 
-            all_texts = []
-            all_times = []
-            segment_times = []
+            all_texts: [str] = []
+            all_times: [Timecode] = []
+            segment_times: [Timecode] = []
 
             for idx, text in enumerate(ocr_texts):
                 tc = tc_seconds[idx]
                 start = tc.start
+                end = tc.end
                 duration = tc.end - tc.start
+                vocal_dur = len(text) * vocal_rate
 
                 all_texts.append(text)
                 all_times.append(tc)
 
                 if text != "":
-                    if duration - len(text) * vocal_rate < min_duration:
+                    if duration - vocal_dur < min_duration:
                         continue
                     else:
-                        start += len(text) * vocal_rate
+                        start += vocal_dur
+                        tc.end = start
                 else:
                     if tc.end - tc.start >= invalid_interval:
                         continue
@@ -196,20 +199,20 @@ class Extractor:
                         start -= min_duration
                         start = start if idx > 0 and tc_seconds[idx-1].end < start else tc.start
 
-                while start < tc.end:
-                    end = start + loop_interval
-                    timecode = Timecode(start, end)
-                    all_texts.append(text)
+                while start < end:
+                    next_start = start + loop_interval
+                    timecode = Timecode(start, next_start)
+                    all_texts.append("")
                     all_times.append(timecode)
                     segment_times.append(timecode)
-                    start = end
+                    start = next_start
 
             self.batch_crop_images(segment_times)
 
             # 3. Further OCR text handling (Duplicated or empty subtitles)
             def upsert(s: str, t: Timecode):
-                pre_text = self.subtitles[-1] if len(self.subtitles) > 0 else ""
-                if s != pre_text:
+                pre_t = self.subtitles[-1] if len(self.subtitles) > 0 else ""
+                if s != pre_t:
                     self.subtitles.append(s)
                     fs = format_time(t.start)
                     fe = format_time(t.end)
@@ -218,25 +221,32 @@ class Extractor:
                     pre = self.timecodes[-1]
                     pre.end = format_time(t.end)
 
-            self.logger.info(f"OCR images ...")
-            start = time.perf_counter()
+            self.logger.info(f"Further OCR images ...")
+            perf_start = time.perf_counter()
+
             for idx, text in enumerate(all_texts):
                 tc = all_times[idx]
+
                 if text != "":
                     upsert(text, tc)
                     continue
 
                 file = self.image_filename(tc.start)
-                tt = self.do_ocr(ocr, [file])
-                if len(tt) > 0 and tt[0] != "":
-                    upsert(tt[0], tc)
-            self.logger.info(f"OCR images with duration: {run_duration(start)}")
+                ocr_tt = self.do_ocr(ocr, [file])
+                ocr_t = ocr_tt[0]
+                if len(ocr_tt) > 0 and ocr_t != "":
+                    upsert(ocr_t, tc)
 
+            self.logger.info(f"Further OCR images with duration: {run_duration(perf_start)}")
+
+            # 4. Write subtitles to a text file
             with open(self.subtitle_file, 'w') as file:
                 for sub in self.subtitles:
                     file.write(f"{sub}\n")
 
-            self.logger.debug(f"OCR subtitles text in file: {self.subtitle_file}")
+            self.logger.debug(f"Timecodes({len(self.timecodes)}): {self.timecodes}")
+            self.logger.debug(f"Subtitles({len(self.subtitles)}): {self.subtitles}")
+            self.logger.info(f"OCR subtitles text in file: {self.subtitle_file}")
             self.logger.info(f"Process timecodes and subtitles with duration: {run_duration(start_time)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Crop screenshot from video with error: {ex.stderr}")
@@ -276,12 +286,12 @@ class Extractor:
         tt = list(map(lambda it: it.start, timecodes))
         chunks = [tt[i:i + chunk_size] for i in range(0, len(tt), chunk_size)]
 
-        start = time.perf_counter()
+        perf_start = time.perf_counter()
         self.logger.info(f"Cropping images base on timecodes by batch size {chunk_size} ...")
         with multiprocessing.Pool() as pool:
             img_files = pool.map(self.crop_images, chunks)
         img_files = [file for chunk_file in img_files for file in chunk_file]
-        self.logger.info(f"Cropped images base on timecodes with duration: {run_duration(start)}")
+        self.logger.info(f"Cropped images base on timecodes with duration: {run_duration(perf_start)}")
 
         return img_files
 
@@ -308,7 +318,7 @@ class Extractor:
         self.logger.info(f"Translating subtitle to different languages")
         langs = ["chinese"]
 
-        start = time.perf_counter()
+        perf_start = time.perf_counter()
         try:
             for lang in langs:
                 srt_name = os.path.join(self.output_dir, f"{lang}.vtt")
@@ -316,11 +326,10 @@ class Extractor:
                     file.write("WEBVTT\n")
                     file.write(WEBVTT_STYLE)
                     for idx, sub in enumerate(self.subtitles):
-                        if len(self.timecodes) >= idx + 1:
-                            ts = self.timecodes[idx]
-                            file.write(f"{ts.start} --> {ts.end}\n")
-                            file.write(f"{sub}\n\n")
-            self.logger.info(f"Translation complete in dir: {self.output_dir}, with duration: {run_duration(start)}")
+                        tc = self.timecodes[idx]
+                        file.write(f"{tc.start} --> {tc.end}\n")
+                        file.write(f"{sub}\n\n")
+            self.logger.info(f"Translation complete in dir: {self.output_dir}, with duration: {run_duration(perf_start)}")
         except Exception as ex:
             self.logger.error(f"Translate subtitle with error: {ex}")
             raise ex
