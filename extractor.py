@@ -62,9 +62,9 @@ class Extractor:
         self.subtitles: [str] = []
 
     def start(self):
-        # self.merge_videos()
-        # self.separate_audio()
-        # self.separate_vocal()
+        self.merge_videos()
+        self.separate_audio()
+        self.separate_vocal()
         tc = self.detect_audio_timecode()
         self.ocr_subtitle(tc)
         self.translate_subtitle()
@@ -78,7 +78,8 @@ class Extractor:
             with open(list_file, 'w') as file:
                 for vc in self.video_clips:
                     file.write(f"file '{os.path.join(self.video_dir, vc)}'\n")
-            ffmpeg.input(list_file, f='concat', safe=0).output(self.video_file, c='copy').run(overwrite_output=True)
+            (ffmpeg.input(list_file, f="concat", safe=0).output(self.video_file, c="copy", loglevel="quiet")
+             .run(overwrite_output=True))
             self.logger.info(f"Merged video file: {self.video_file}, with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Merge video clips with error: {ex.stderr.decode('utf-8')}")
@@ -90,7 +91,8 @@ class Extractor:
         self.logger.info(f"Separating audio from video")
         perf_start = time.perf_counter()
         try:
-            ffmpeg.input(self.video_file).output(self.audio_file, acodec='acc', c='copy').run(overwrite_output=True)
+            (ffmpeg.input(self.video_file).output(self.audio_file, acodec="acc", c="copy", loglevel="quiet")
+             .run(overwrite_output=True))
             self.logger.info(f"Separated audio file: {self.audio_file}, with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Separate audio from video with error: {ex.stderr.decode('utf-8')}")
@@ -116,12 +118,13 @@ class Extractor:
 
         perf_start = time.perf_counter()
         try:
-            cmd = ffmpeg.input(self.vocal_file).output('-', af='silencedetect=noise=-15dB:d=0.4', f='null')
+            cmd = (ffmpeg.input(self.vocal_file)
+                   .output("-", af="silencedetect=noise=-15dB:d=0.4", f="null", loglevel="quiet"))
             _, out = ffmpeg.run(cmd, capture_stdout=True, capture_stderr=True)
             out = out.decode('utf-8')
 
             # Silence end means vocal start, so the 'silence_end" is at the first.
-            pattern = re.compile(r'silence_end: (\d+\.\d+).*?silence_start: (\d+\.\d+)', re.DOTALL)
+            pattern = re.compile(r"silence_end: (\d+\.\d+).*?silence_start: (\d+\.\d+)", re.DOTALL)
             matches = pattern.findall(out)
             for match in matches:
                 start, end = map(float, match)
