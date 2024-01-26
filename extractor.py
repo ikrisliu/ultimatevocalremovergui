@@ -44,7 +44,7 @@ class Extractor:
             log_formatter=None
     ):
         self.video_dir = video_dir
-        self.video_clips = os.listdir(video_dir)
+        self.video_clips = sorted(os.listdir(video_dir))
         self.output_dir = output_dir
         self.subtitle_box = subtitle_box
         self.use_gpu = use_gpu
@@ -62,9 +62,9 @@ class Extractor:
         self.subtitles: [str] = []
 
     def start(self):
-        self.merge_videos()
-        self.separate_audio()
-        self.separate_vocal()
+        # self.merge_videos()
+        # self.separate_audio()
+        # self.separate_vocal()
         tc = self.detect_audio_timecode()
         self.ocr_subtitle(tc)
         self.translate_subtitle()
@@ -78,7 +78,7 @@ class Extractor:
             with open(list_file, 'w') as file:
                 for vc in self.video_clips:
                     file.write(f"file '{os.path.join(self.video_dir, vc)}'\n")
-            (ffmpeg.input(list_file, f="concat", safe=0).output(self.video_file, c="copy", loglevel="quiet")
+            (ffmpeg.input(list_file, f="concat", safe=0).output(self.video_file, c="copy", loglevel=self.log_level)
              .run(overwrite_output=True))
             self.logger.info(f"Merged video file: {self.video_file}, with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
@@ -91,7 +91,7 @@ class Extractor:
         self.logger.info(f"Separating audio from video")
         perf_start = time.perf_counter()
         try:
-            (ffmpeg.input(self.video_file).output(self.audio_file, acodec="acc", c="copy", loglevel="quiet")
+            (ffmpeg.input(self.video_file).output(self.audio_file, acodec="acc", c="copy", loglevel=self.log_level)
              .run(overwrite_output=True))
             self.logger.info(f"Separated audio file: {self.audio_file}, with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
@@ -118,8 +118,7 @@ class Extractor:
 
         perf_start = time.perf_counter()
         try:
-            cmd = (ffmpeg.input(self.vocal_file)
-                   .output("-", af="silencedetect=noise=-15dB:d=0.4", f="null", loglevel="quiet"))
+            cmd = ffmpeg.input(self.vocal_file).output("-", af="silencedetect=noise=-15dB:d=0.4", f="null")
             _, out = ffmpeg.run(cmd, capture_stdout=True, capture_stderr=True)
             out = out.decode('utf-8')
 
@@ -134,7 +133,7 @@ class Extractor:
                 for ts in tc_seconds:
                     file.write(f"{ts.start} --> {ts.end}\n")
 
-            self.logger.debug(tc_seconds)
+            self.logger.debug(f"Detected vocal timecodes: {tc_seconds}")
             self.logger.info(f"Detected vocal timecodes in file: {self.timecode_file}, "
                              f"with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
@@ -166,10 +165,10 @@ class Extractor:
             self.logger.info(f"OCR images with duration: {run_duration(perf_start)}")
 
             # 2. Crop images according to segmented timecodes (segment timecodes by a constant interval)
-            vocal_rate = 0.15       # Say one word in seconds
-            loop_interval = 0.3     # Loop interval in seconds
-            min_duration = 0.5      # Subtitle display minimum duration
-            forward_time = 0.3      # Forward time in seconds as start timecode for cropping image
+            vocal_rate = 0.15  # Say one word in seconds
+            loop_interval = 0.3  # Loop interval in seconds
+            min_duration = 0.5  # Subtitle display minimum duration
+            forward_time = 0.3  # Forward time in seconds as start timecode for cropping image
             invalid_interval = 3.0
 
             all_texts: [str] = []
@@ -188,6 +187,7 @@ class Extractor:
 
                 if text != "":
                     if duration - vocal_dur < min_duration:
+                        tc.start -= max(min_duration - duration, 0)
                         continue
                     else:
                         start += vocal_dur
@@ -198,9 +198,9 @@ class Extractor:
 
                     if tc.end - tc.start > min_duration:
                         start += forward_time
-                    else:   # Make sure subtitle display duration is not less than `min_duration` seconds
+                    else:  # Make sure subtitle display duration is not less than `min_duration` seconds
                         start -= min_duration
-                        start = start if idx > 0 and tc_seconds[idx-1].end < start else tc.start
+                        start = start if idx > 0 and tc_seconds[idx - 1].end < start else tc.start
 
                 while start < end:
                     next_start = start + loop_interval
@@ -273,19 +273,20 @@ class Extractor:
         cmd = ["ffmpeg"]
         if self.use_gpu:
             cmd.extend(["-hwaccel", "cuda"])
-        cmd.extend(["-i", self.video_file])
 
         for s in ss:
             file = self.image_filename(s)
             output_files.append(file)
             start = str(self.cropping_start_time(s))
-            cmd.extend(["-ss", start, "-vf", "crop=700:100:10:850", "-vframes", "1", "-loglevel", "quiet", file, "-y"])
+            vf = "crop=700:100:10:850"
+            # Minimize the decoding and seeking operations by using the -ss (seek) option `before` the input file
+            cmd.extend(["-ss", start, "-i", self.video_file, "-vf", vf, "-vframes", "1", "-loglevel", "quiet", file, "-y"])
         subprocess.run(cmd)
 
         return output_files
 
     def batch_crop_images(self, timecodes: [Timecode]):
-        chunk_size = 20
+        chunk_size = 1
         tt = list(map(lambda it: it.start, timecodes))
         chunks = [tt[i:i + chunk_size] for i in range(0, len(tt), chunk_size)]
 
@@ -301,20 +302,23 @@ class Extractor:
     def do_ocr(self, ocr: PaddleOCR, img_files: [str]):
         ocr_texts = []
         for idx, file in enumerate(img_files):
-            result = ocr.ocr(file, cls=False)
-            self.logger.debug(f"OCR Result: {result} from image: {file}")
+            try:
+                result = ocr.ocr(file, cls=False)
+                self.logger.debug(f"OCR Result: {result} from image: {file}")
 
-            if result and result != [None]:
-                # [[[[[191.0, 10.0], [511.0, 10.0], [511.0, 49.0], [191.0, 49.0]], ('你好吗', 0.99381166696)]]]
-                result = list(chain.from_iterable(result))
-                result = list(chain.from_iterable(result))
-                for i, line in enumerate(result):
-                    if i == 1:
-                        ocr_texts.append(line[0].strip())
-                        break
-            else:
+                if result and result != [None]:
+                    # [[[[[191.0, 10.0], [511.0, 10.0], [511.0, 49.0], [191.0, 49.0]], ('你好吗', 0.99381166696)]]]
+                    result = list(chain.from_iterable(result))
+                    result = list(chain.from_iterable(result))
+                    for i, line in enumerate(result):
+                        if i == 1:
+                            ocr_texts.append(line[0].strip())
+                            break
+                else:
+                    ocr_texts.append("")
+            except Exception as ex:
                 ocr_texts.append("")
-
+                self.logger.error(ex)
         return ocr_texts
 
     def translate_subtitle(self):
@@ -332,7 +336,8 @@ class Extractor:
                         tc = self.timecodes[idx]
                         file.write(f"{tc.start} --> {tc.end}\n")
                         file.write(f"{sub}\n\n")
-            self.logger.info(f"Translation complete in dir: {self.output_dir}, with duration: {run_duration(perf_start)}")
+            self.logger.info(
+                f"Translation complete in dir: {self.output_dir}, with duration: {run_duration(perf_start)}")
         except Exception as ex:
             self.logger.error(f"Translate subtitle with error: {ex}")
             raise ex
