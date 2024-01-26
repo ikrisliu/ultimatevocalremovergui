@@ -150,7 +150,7 @@ class Extractor:
             shutil.rmtree(ss_dir)
         os.makedirs(ss_dir)
 
-        ocr = PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=self.use_gpu, show_log=False,
+        ocr = PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=self.use_gpu, show_log=False, use_space_char=True,
                         rec_model_dir="models/PaddleOCR/ch_PP-OCRv4_rec_server_infer",
                         det_model_dir="models/PaddleOCR/ch_PP-OCRv4_det_server_infer")
 
@@ -168,8 +168,7 @@ class Extractor:
             vocal_rate = 0.15  # Say one word in seconds
             loop_interval = 0.3  # Loop interval in seconds
             min_duration = 0.5  # Subtitle display minimum duration
-            forward_time = 0.3  # Forward time in seconds as start timecode for cropping image
-            invalid_interval = 3.0
+            invalid_interval = 10.0
 
             all_texts: [str] = []
             all_times: [Timecode] = []
@@ -186,18 +185,19 @@ class Extractor:
                 all_times.append(tc)
 
                 if text != "":
-                    if duration - vocal_dur < min_duration:
-                        tc.start -= max(min_duration - duration, 0)
+                    if duration <= min_duration:
+                        tc.start -= (min_duration - duration)
                         continue
-                    else:
-                        start += vocal_dur
-                        tc.end = start
+                    if duration - vocal_dur <= vocal_rate:
+                        continue
+                    start += vocal_dur
+                    tc.end = start
                 else:
-                    if tc.end - tc.start >= invalid_interval:
+                    if duration >= invalid_interval:
                         continue
 
-                    if tc.end - tc.start > min_duration:
-                        start += forward_time
+                    if duration > min_duration:
+                        start += max(duration / 5.0, loop_interval)
                     else:  # Make sure subtitle display duration is not less than `min_duration` seconds
                         start -= min_duration
                         start = start if idx > 0 and tc_seconds[idx - 1].end < start else tc.start
@@ -278,9 +278,9 @@ class Extractor:
             file = self.image_filename(s)
             output_files.append(file)
             start = str(self.cropping_start_time(s))
-            vf = "crop=700:100:10:850"
             # Minimize the decoding and seeking operations by using the -ss (seek) option `before` the input file
-            cmd.extend(["-ss", start, "-i", self.video_file, "-vf", vf, "-vframes", "1", "-loglevel", "quiet", file, "-y"])
+            cmd.extend(["-ss", start, "-i", self.video_file])
+            cmd.extend(["-vf", "crop=700:100:10:850", "-vframes", "1", "-loglevel", "quiet", file, "-y"])
         subprocess.run(cmd)
 
         return output_files
@@ -307,13 +307,14 @@ class Extractor:
                 self.logger.debug(f"OCR Result: {result} from image: {file}")
 
                 if result and result != [None]:
-                    # [[[[[191.0, 10.0], [511.0, 10.0], [511.0, 49.0], [191.0, 49.0]], ('你好吗', 0.99381166696)]]]
+                    # [[
+                    # [[[191.0, 10.0], [511.0, 10.0], [511.0, 49.0], [191.0, 49.0]], ('CRAB', 0.99381166696)],
+                    # [[[586.0, 0.0], [665.0, 44.0], [650.0, 70.0], [572.0, 22.0]], ('你好吗', 0.9869911670684814)]
+                    # ]]
                     result = list(chain.from_iterable(result))
-                    result = list(chain.from_iterable(result))
-                    for i, line in enumerate(result):
-                        if i == 1:
-                            ocr_texts.append(line[0].strip())
-                            break
+                    max_len_ocr = max(result, key=lambda v: len(v[1][0]))
+                    text = max_len_ocr[1][0].strip()
+                    ocr_texts.append(text)
                 else:
                     ocr_texts.append("")
             except Exception as ex:
