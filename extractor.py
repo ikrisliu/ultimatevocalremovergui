@@ -62,9 +62,9 @@ class Extractor:
         self.subtitles: [str] = []
 
     def start(self):
-        # self.merge_videos()
-        # self.separate_audio()
-        # self.separate_vocal()
+        self.merge_videos()
+        self.separate_audio()
+        self.separate_vocal()
         tc = self.detect_audio_timecode()
         self.ocr_subtitle(tc)
         self.translate_subtitle()
@@ -90,13 +90,19 @@ class Extractor:
     def separate_audio(self):
         self.logger.info(f"Separating audio from video")
         perf_start = time.perf_counter()
+        tmp_file = os.path.join(self.output_dir, "audio-tmp.aac")
         try:
-            (ffmpeg.input(self.video_file).output(self.audio_file, acodec="acc", c="copy", loglevel=self.log_level)
+            (ffmpeg.input(self.video_file).output(tmp_file, acodec="copy", loglevel=self.log_level)
+             .run(overwrite_output=True))
+            # Normalize the audio to ensure consistent levels
+            (ffmpeg.input(tmp_file).output(self.audio_file, af="loudnorm=I=-11:LRA=10:TP=0", loglevel=self.log_level)
              .run(overwrite_output=True))
             self.logger.info(f"Separated audio file: {self.audio_file}, with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Separate audio from video with error: {ex.stderr.decode('utf-8')}")
             raise ex
+        finally:
+            os.remove(tmp_file)
 
     def separate_vocal(self):
         self.logger.info(f"Separating vocal from audio file: {self.audio_file}")
@@ -118,12 +124,13 @@ class Extractor:
 
         perf_start = time.perf_counter()
         try:
-            cmd = ffmpeg.input(self.vocal_file).output("-", af="silencedetect=noise=-15dB:d=0.4", f="null")
+            cmd = ffmpeg.input(self.vocal_file).output("-", af="silencedetect=noise=-14.5dB:d=0.4", f="null")
             _, out = ffmpeg.run(cmd, capture_stdout=True, capture_stderr=True)
             out = out.decode('utf-8')
+            self.logger.debug(f"Detected vocal timecodes: {out}")
 
             # Silence end means vocal start, so the 'silence_end" is at the first.
-            pattern = re.compile(r"silence_end: (\d+\.\d+).*?silence_start: (\d+\.\d+)", re.DOTALL)
+            pattern = re.compile(r"silence_end: (\d+\.\d+).*?silence_start: (\d+\.?\d*)", re.DOTALL)
             matches = pattern.findall(out)
             for match in matches:
                 start, end = map(float, match)
@@ -133,7 +140,6 @@ class Extractor:
                 for ts in tc_seconds:
                     file.write(f"{ts.start} --> {ts.end}\n")
 
-            self.logger.debug(f"Detected vocal timecodes: {tc_seconds}")
             self.logger.info(f"Detected vocal timecodes in file: {self.timecode_file}, "
                              f"with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
