@@ -95,7 +95,8 @@ class Extractor:
             raise ex
         finally:
             os.remove(list_file)
-            os.remove(tmp_file)
+            if os.path.exists(tmp_file):
+                os.remove(tmp_file)
 
     def separate_audio(self):
         self.logger.info(f"Separating audio from video")
