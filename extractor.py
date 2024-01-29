@@ -300,7 +300,7 @@ class Extractor:
             start = str(self.cropping_start_time(s))
             # Minimize the decoding and seeking operations by using the -ss (seek) option `before` the input file
             cmd.extend(["-ss", start, "-i", self.video_file])
-            cmd.extend(["-vf", "crop=700:100:10:850", "-vframes", "1", "-loglevel", "quiet", file, "-y"])
+            cmd.extend(["-vf", f"crop={self.subtitle_box}", "-vframes", "1", "-loglevel", "quiet", file, "-y"])
         subprocess.run(cmd)
 
         return output_files
