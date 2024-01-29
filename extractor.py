@@ -339,7 +339,6 @@ class Extractor:
                     ocr_texts.append("")
             except Exception as ex:
                 self.logger.error(f"OCR image {file}, with error: {ex}")
-                self.do_ocr(ocr, [file])  # Retry until success
         return ocr_texts
 
     def translate_subtitle(self):
