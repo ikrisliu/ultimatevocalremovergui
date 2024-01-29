@@ -123,10 +123,13 @@ class Extractor:
                 export_path=self.output_dir,
             )
             uvr.process_start()
-            self.logger.info(f"Separated vocal file: {self.vocal_file}, with duration: {run_duration(perf_start)}")
+        except AttributeError as ex:
+            pass
         except Exception as ex:
             self.logger.error(f"Separate vocal with error: {ex}")
             raise ex
+        finally:
+            self.logger.info(f"Separated vocal file: {self.vocal_file}, with duration: {run_duration(perf_start)}")
 
     def detect_audio_timecode(self):
         self.logger.info(f"Detecting vocal timecodes from vocal file: {self.vocal_file}")
