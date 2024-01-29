@@ -39,5 +39,5 @@ onnx2pytorch
 SoundFile==0.11.0
 PySoundFile==0.9.0.post1; sys_platform == 'darwin'
 Dora==0.0.3
-numpy==1.23.5
+numpy==1.24.2
 ffmpeg-python

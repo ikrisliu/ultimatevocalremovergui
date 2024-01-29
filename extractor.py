@@ -40,6 +40,7 @@ class Extractor:
             output_dir: str,
             subtitle_box: str,
             use_gpu: bool,
+            sample_mode: bool,
             log_level=logging.DEBUG,
             log_formatter=None
     ):
@@ -48,6 +49,7 @@ class Extractor:
         self.output_dir = output_dir
         self.subtitle_box = subtitle_box
         self.use_gpu = use_gpu
+        self.sample_mode = sample_mode
         self.log_level = log_level
         self.log_formatter = log_formatter
         self.logger = self.get_logger()
@@ -74,18 +76,26 @@ class Extractor:
         list_file = "list.txt"
 
         perf_start = time.perf_counter()
+        tmp_file = os.path.join(self.output_dir, "video-tmp.mp4")
         try:
             with open(list_file, 'w') as file:
                 for vc in self.video_clips:
                     file.write(f"file '{os.path.join(self.video_dir, vc)}'\n")
             (ffmpeg.input(list_file, f="concat", safe=0).output(self.video_file, c="copy", loglevel=self.log_level)
              .run(overwrite_output=True))
+
+            if self.sample_mode:
+                os.rename(self.video_file, tmp_file)
+                (ffmpeg.input(tmp_file).output(self.video_file, t="60", c="copy", loglevel=self.log_level)
+                 .run(overwrite_output=True))
+
             self.logger.info(f"Merged video file: {self.video_file}, with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Merge video clips with error: {ex.stderr.decode('utf-8')}")
             raise ex
         finally:
             os.remove(list_file)
+            os.remove(tmp_file)
 
     def separate_audio(self):
         self.logger.info(f"Separating audio from video")
@@ -324,7 +334,7 @@ class Extractor:
                 else:
                     ocr_texts.append("")
             except Exception as ex:
-                ocr_texts.append("")
+                self.do_ocr(ocr, [file])  # Retry until success
                 self.logger.error(ex)
         return ocr_texts
 

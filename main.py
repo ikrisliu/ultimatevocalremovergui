@@ -39,6 +39,13 @@ def main():
     )
 
     parser.add_argument(
+        "--sample_mode",
+        type=lambda x: (str(x).lower() == "true"),
+        default=False,
+        help="Optional: sample mode with 60 seconds (default: %(default)s). Example: --sample_mode=True",
+    )
+
+    parser.add_argument(
         "--log_level",
         default="info",
         help="Optional: logging level, e.g. info, debug, warning (default: %(default)s). Example: --log_level=debug",
@@ -62,6 +69,7 @@ def main():
         output_dir=output_dir,
         subtitle_box=args.subtitle_box,
         use_gpu=args.use_gpu,
+        sample_mode=args.sample_mode,
         log_level=log_level,
         log_formatter=log_formatter,
     )
