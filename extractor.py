@@ -170,7 +170,7 @@ class Extractor:
             shutil.rmtree(ss_dir)
         os.makedirs(ss_dir)
 
-        ocr = PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=self.use_gpu, show_log=False, use_space_char=True,
+        ocr = PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=self.use_gpu, show_log=False, det_db_unclip_ratio=5,
                         rec_model_dir="models/PaddleOCR/ch_PP-OCRv4_rec_server_infer",
                         det_model_dir="models/PaddleOCR/ch_PP-OCRv4_det_server_infer")
 
@@ -333,7 +333,7 @@ class Extractor:
                     # ]]
                     result = list(chain.from_iterable(result))
                     max_len_ocr = max(result, key=lambda v: len(v[1][0]))
-                    text = max_len_ocr[1][0].strip()
+                    text = max_len_ocr[1][0].strip(" ,;:.·，．。")
                     ocr_texts.append(text)
                 else:
                     ocr_texts.append("")
