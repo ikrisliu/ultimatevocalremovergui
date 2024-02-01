@@ -8,11 +8,14 @@ import ffmpeg
 import subprocess
 import multiprocessing
 from dataclasses import dataclass
+from dotenv import load_dotenv
 from itertools import chain
 from datetime import datetime, timedelta
 from uvr_cli import UVR
 from paddleocr import PaddleOCR
-from webvtt_template import WEBVTT_STYLE
+from openai import OpenAI, RateLimitError
+from constants import WEBVTT_TEMPLATE, OPENAI_MODEL, PADDLE_REC_MODEL_DIR, PADDLE_DET_MODEL_DIR, TARGET_LANGUAGES, \
+    OPENAI_SYSTEM_MESSAGE
 
 
 def run_duration(start):
@@ -32,6 +35,13 @@ def format_time(sec):
 class Timecode:
     start: str
     end: str
+
+
+@dataclass
+class Subtitle:
+    language: str
+    contents: [str]
+    filename: str
 
 
 class Extractor:
@@ -61,15 +71,15 @@ class Extractor:
         self.subtitle_file = os.path.join(output_dir, "subtitles.txt")
         self.timecode_file = os.path.join(output_dir, "timecodes.txt")
         self.timecodes: [Timecode] = []
-        self.subtitles: [str] = []
+        self.sub_texts: [str] = []
 
     def start(self):
-        self.merge_videos()
-        self.separate_audio()
-        self.separate_vocal()
+        # self.merge_videos()
+        # self.separate_audio()
+        # self.separate_vocal()
         tc = self.detect_audio_timecode()
         self.ocr_subtitle(tc)
-        self.translate_subtitle()
+        self.generate_subtitle()
 
     def merge_videos(self):
         self.logger.info(f"Merging multiple video files: {self.video_clips}")
@@ -170,9 +180,8 @@ class Extractor:
             shutil.rmtree(ss_dir)
         os.makedirs(ss_dir)
 
-        ocr = PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=self.use_gpu, show_log=False, det_db_unclip_ratio=5,
-                        rec_model_dir="models/PaddleOCR/ch_PP-OCRv4_rec_server_infer",
-                        det_model_dir="models/PaddleOCR/ch_PP-OCRv4_det_server_infer")
+        ocr = PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=self.use_gpu, show_log=False,
+                        rec_model_dir=PADDLE_REC_MODEL_DIR, det_model_dir=PADDLE_DET_MODEL_DIR)
 
         start_time = time.perf_counter()
         try:
@@ -234,9 +243,9 @@ class Extractor:
 
             # 3. Further OCR text handling (Duplicated or empty subtitles)
             def upsert(s: str, t: Timecode):
-                pre_t = self.subtitles[-1] if len(self.subtitles) > 0 else ""
+                pre_t = self.sub_texts[-1] if len(self.sub_texts) > 0 else ""
                 if s != pre_t:
-                    self.subtitles.append(s)
+                    self.sub_texts.append(s)
                     fs = format_time(t.start)
                     fe = format_time(t.end)
                     self.timecodes.append(Timecode(fs, fe))
@@ -264,11 +273,11 @@ class Extractor:
 
             # 4. Write subtitles to a text file
             with open(self.subtitle_file, 'w') as file:
-                for sub in self.subtitles:
-                    file.write(f"{sub}\n")
+                for text in self.sub_texts:
+                    file.write(f"{text}\n")
 
             self.logger.debug(f"Timecodes({len(self.timecodes)}): {self.timecodes}")
-            self.logger.debug(f"Subtitles({len(self.subtitles)}): {self.subtitles}")
+            self.logger.debug(f"Subtitles({len(self.sub_texts)}): {self.sub_texts}")
             self.logger.info(f"OCR subtitles text in file: {self.subtitle_file}")
             self.logger.info(f"Process timecodes and subtitles with duration: {run_duration(start_time)}")
         except ffmpeg.Error as ex:
@@ -307,7 +316,7 @@ class Extractor:
 
     def batch_crop_images(self, timecodes: [Timecode]):
         chunk_size = 1
-        tt = list(map(lambda it: it.start, timecodes))
+        tt = [tc.start for tc in timecodes]
         chunks = [tt[i:i + chunk_size] for i in range(0, len(tt), chunk_size)]
 
         perf_start = time.perf_counter()
@@ -342,25 +351,97 @@ class Extractor:
         return ocr_texts
 
     def translate_subtitle(self):
-        self.logger.info(f"Translating subtitle to different languages")
-        langs = ["chinese"]
+        self.logger.info(f"Translating subtitle to {TARGET_LANGUAGES}")
+
+        subtitles = [Subtitle(lang, [], os.path.join(self.output_dir, f"{lang}.vtt")) for lang in TARGET_LANGUAGES]
+        subtitles[0].contents = self.sub_texts  # Chinese subtitle
+
+        def text_to_dict(s: str):
+            rst_dict = {}
+            sections = s.split('\n\n')
+            for section in sections:
+                lines = section.split('\n')
+                language = lines[0].strip(':')
+                rst_dict[language] = lines[1:]
+            return rst_dict
 
         perf_start = time.perf_counter()
+        chunk_size = 50
+        chunks = [self.sub_texts[i:i + chunk_size] for i in range(0, len(self.sub_texts), chunk_size)]
+
         try:
-            for lang in langs:
-                srt_name = os.path.join(self.output_dir, f"{lang}.vtt")
-                with open(srt_name, 'w') as file:
-                    file.write("WEBVTT\n")
-                    file.write(WEBVTT_STYLE)
-                    for idx, sub in enumerate(self.subtitles):
-                        tc = self.timecodes[idx]
-                        file.write(f"{tc.start} --> {tc.end}\n")
-                        file.write(f"{sub}\n\n")
+            load_dotenv()
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            messages = [OPENAI_SYSTEM_MESSAGE]
+            assistant_msg = None
+            start = time.perf_counter()
+
+            for idx, chuck in enumerate(chunks):
+                if idx > 0 and assistant_msg:
+                    messages.append(assistant_msg)
+
+                messages.append({
+                    "role": "user",
+                    "content": "\n".join(chuck)
+                })
+                self.logger.debug(f"Request messages with: {messages}")
+
+                response = client.chat.completions.create(
+                    model=OPENAI_MODEL,
+                    messages=messages,
+                    temperature=0.2,
+                    max_tokens=3000,
+                )
+                assist_msg = response.choices[0].message
+                self.logger.debug(f"Chat Response: {response}")
+                self.logger.debug(f"Token usage: {response.usage}")
+
+                for i, sub in enumerate(subtitles):
+                    if i == 0:  # Skip Chinese
+                        continue
+                    sub.contents = text_to_dict(assist_msg.content)[sub.language]
+
+                # To avoid exceed context window maximum tokens (16,385), keep the first system message and
+                # the last two messages(user and assistant) as overlap for keeping chat context.
+                if (idx + 1) % 5 == 0:
+                    messages = [messages[0], messages[-2]]
+                    self.logger.debug(f"Reset messages with: {messages}")
+
+                # Make sure don't exceed the rate limits (60,000 TPM) and delay some duration to next around requests.
+                if (idx + 1) % 20 == 0:
+                    dur = time.perf_counter() - start
+                    delay = max(60 - int(dur), 0)
+                    self.logger.info(f"Delay with {delay} seconds ...")
+                    time.sleep(delay)
+                    start = time.perf_counter()
+
+            # Write subtitles into VTT files
+            for sub in subtitles:
+                self.generate_vtt_subtitle(sub.contents, sub.filename)
+
             self.logger.info(
-                f"Translation complete in dir: {self.output_dir}, with duration: {run_duration(perf_start)}")
+                f"Translation complete with VTT files in dir: {self.output_dir}, with duration: {run_duration(perf_start)}")
+        except RateLimitError as ex:
+            self.logger.error(f"OpenAI API rate limit with: {ex}")
         except Exception as ex:
             self.logger.error(f"Translate subtitle with error: {ex}")
             raise ex
+
+    def generate_subtitle(self, contents: [str] = None, filename: str = None):
+        self.logger.info(f"Generating subtitle with WebVTT format")
+
+        perf_start = time.perf_counter()
+        vtt_file = filename if filename else os.path.join(self.output_dir, "Chinese.vtt")
+        texts = contents if contents else self.sub_texts
+
+        with open(vtt_file, 'w') as file:
+            file.write(WEBVTT_TEMPLATE)
+            for idx, line in enumerate(texts):
+                tc = self.timecodes[idx]
+                file.write(f"{tc.start} --> {tc.end}\n")
+                file.write(f"{line}\n\n")
+
+        self.logger.info(f"Generated subtitle with {vtt_file}")
 
     def get_logger(self):
         logger = logging.getLogger(__name__)

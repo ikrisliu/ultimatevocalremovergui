@@ -27,7 +27,7 @@ def main():
 
     parser.add_argument(
         "--subtitle_box",
-        default="700:80:10:860",
+        default="640:64:40:868",
         help="Optional: cropped box of subtitle in video (default: %(default)s). Example: --subtitle_box=700:80:10:860"
     )
 
