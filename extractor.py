@@ -278,7 +278,7 @@ class Extractor:
                 for tc in self.timecodes:
                     file.write(f"{tc.start} --> {tc.end}\n")
 
-            with open(self.subtitle_file, 'w') as file:
+            with open(self.subtitle_file, 'w', encoding="utf-8") as file:
                 for text in self.sub_texts:
                     file.write(f"{text}\n")
 
@@ -450,7 +450,7 @@ class Extractor:
                     start, end = line.strip("\n").split(" --> ")
                     self.timecodes.append(Timecode(start, end))
 
-        with open(filename, 'w') as file:
+        with open(filename, 'w', encoding="utf-8") as file:
             file.write(WEBVTT_TEMPLATE)
             for idx, line in enumerate(contents):
                 tc = self.timecodes[idx]
