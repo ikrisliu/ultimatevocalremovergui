@@ -27,8 +27,8 @@ def main():
 
     parser.add_argument(
         "--subtitle_box",
-        default="640:64:40:868",
-        help="Optional: cropped box of subtitle in video (default: %(default)s). Example: --subtitle_box=700:80:10:860"
+        default="700:100:10:848",
+        help="Optional: cropped box of subtitle in video (default: %(default)s). Example: --subtitle_box=700:100:10:848"
     )
 
     parser.add_argument(
@@ -39,10 +39,16 @@ def main():
     )
 
     parser.add_argument(
-        "--sample_mode",
+        "--sample_duration",
+        default=None,
+        help="Optional: sample duration in seconds (default: %(default)s). Example: --sample_mode=60",
+    )
+
+    parser.add_argument(
+        "--gen_multi_langs",
         type=lambda x: (str(x).lower() == "true"),
         default=False,
-        help="Optional: sample mode with 60 seconds (default: %(default)s). Example: --sample_mode=True",
+        help="Optional: only generate multi-language subtitles (default: %(default)). Example: --gen_multi_langs=True",
     )
 
     parser.add_argument(
@@ -69,7 +75,8 @@ def main():
         output_dir=output_dir,
         subtitle_box=args.subtitle_box,
         use_gpu=args.use_gpu,
-        sample_mode=args.sample_mode,
+        sample_duration=args.sample_duration,
+        gen_multi_langs=args.gen_multi_langs,
         log_level=log_level,
         log_formatter=log_formatter,
     )

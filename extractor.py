@@ -15,7 +15,7 @@ from uvr_cli import UVR
 from paddleocr import PaddleOCR
 from openai import OpenAI, RateLimitError
 from constants import WEBVTT_TEMPLATE, OPENAI_MODEL, PADDLE_REC_MODEL_DIR, PADDLE_DET_MODEL_DIR, TARGET_LANGUAGES, \
-    OPENAI_SYSTEM_MESSAGE
+    OPENAI_SYSTEM_MESSAGE, SOURCE_LANGUAGE
 
 
 def run_duration(start):
@@ -44,13 +44,20 @@ class Subtitle:
     filename: str
 
 
+VOCAL_RATE = 0.15           # Say one word in seconds
+LOOP_INTERVAL = 0.5         # Loop interval in seconds
+MIN_DURATION = 0.5          # Subtitle display minimum duration
+INVALID_INTERVAL = 10.0     # Vocal duration exceeds 10s means invalid
+
+
 class Extractor:
     def __init__(
             self, video_dir: str,
             output_dir: str,
             subtitle_box: str,
             use_gpu: bool,
-            sample_mode: bool,
+            sample_duration: float,
+            gen_multi_langs: bool,
             log_level=logging.DEBUG,
             log_formatter=None
     ):
@@ -59,7 +66,8 @@ class Extractor:
         self.output_dir = output_dir
         self.subtitle_box = subtitle_box
         self.use_gpu = use_gpu
-        self.sample_mode = sample_mode
+        self.sample_duration = sample_duration
+        self.gen_multi_langs = gen_multi_langs
         self.log_level = log_level
         self.log_formatter = log_formatter
         self.logger = self.get_logger()
@@ -68,18 +76,22 @@ class Extractor:
         self.video_file = os.path.join(output_dir, "video.mp4")
         self.audio_file = os.path.join(output_dir, "audio.aac")
         self.vocal_file = os.path.join(output_dir, "1_audio_(Vocals).wav")
-        self.subtitle_file = os.path.join(output_dir, "subtitles.txt")
+        self.subtitle_file = os.path.join(output_dir, f"{SOURCE_LANGUAGE}.txt")
         self.timecode_file = os.path.join(output_dir, "timecodes.txt")
         self.timecodes: [Timecode] = []
         self.sub_texts: [str] = []
 
     def start(self):
-        # self.merge_videos()
-        # self.separate_audio()
-        # self.separate_vocal()
+        if self.gen_multi_langs:
+            self.generate_subtitles(TARGET_LANGUAGES)
+            return
+
+        self.merge_videos()
+        self.separate_audio()
+        self.separate_vocal()
         tc = self.detect_audio_timecode()
         self.ocr_subtitle(tc)
-        self.generate_subtitle()
+        self.generate_subtitles([SOURCE_LANGUAGE])
 
     def merge_videos(self):
         self.logger.info(f"Merging multiple video files: {self.video_clips}")
@@ -94,9 +106,9 @@ class Extractor:
             (ffmpeg.input(list_file, f="concat", safe=0).output(self.video_file, c="copy", loglevel=self.log_level)
              .run(overwrite_output=True))
 
-            if self.sample_mode:
+            if self.sample_duration:
                 os.rename(self.video_file, tmp_file)
-                (ffmpeg.input(tmp_file).output(self.video_file, t="60", c="copy", loglevel=self.log_level)
+                (ffmpeg.input(tmp_file).output(self.video_file, t=self.sample_duration, c="copy", loglevel=self.log_level)
                  .run(overwrite_output=True))
 
             self.logger.info(f"Merged video file: {self.video_file}, with duration: {run_duration(perf_start)}")
@@ -134,7 +146,7 @@ class Extractor:
                 export_path=self.output_dir,
             )
             uvr.process_start()
-        except AttributeError as ex:
+        except AttributeError:
             pass
         except Exception as ex:
             self.logger.error(f"Separate vocal with error: {ex}")
@@ -160,12 +172,7 @@ class Extractor:
                 start, end = map(float, match)
                 tc_seconds.append(Timecode(start, end))
 
-            with open(self.timecode_file, 'w') as file:
-                for ts in tc_seconds:
-                    file.write(f"{ts.start} --> {ts.end}\n")
-
-            self.logger.info(f"Detected vocal timecodes in file: {self.timecode_file}, "
-                             f"with duration: {run_duration(perf_start)}")
+            self.logger.info(f"Detected vocal timecodes with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Detect vocal timecodes with exception: {ex.stderr.decode('utf-8')}")
             raise ex
@@ -180,7 +187,7 @@ class Extractor:
             shutil.rmtree(ss_dir)
         os.makedirs(ss_dir)
 
-        ocr = PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=self.use_gpu, show_log=False,
+        ocr = PaddleOCR(use_angle_cls=False, lang="ch", use_gpu=self.use_gpu, show_log=False, det_db_unclip_ratio=2,
                         rec_model_dir=PADDLE_REC_MODEL_DIR, det_model_dir=PADDLE_DET_MODEL_DIR)
 
         start_time = time.perf_counter()
@@ -194,11 +201,6 @@ class Extractor:
             self.logger.info(f"OCR images with duration: {run_duration(perf_start)}")
 
             # 2. Crop images according to segmented timecodes (segment timecodes by a constant interval)
-            vocal_rate = 0.15  # Say one word in seconds
-            loop_interval = 0.3  # Loop interval in seconds
-            min_duration = 0.5  # Subtitle display minimum duration
-            invalid_interval = 10.0
-
             all_texts: [str] = []
             all_times: [Timecode] = []
             segment_times: [Timecode] = []
@@ -208,32 +210,32 @@ class Extractor:
                 start = tc.start
                 end = tc.end
                 duration = tc.end - tc.start
-                vocal_dur = len(text) * vocal_rate
-
-                all_texts.append(text)
-                all_times.append(tc)
+                vocal_dur = len(text) * VOCAL_RATE
 
                 if text != "":
-                    if duration <= min_duration:
-                        tc.start -= (min_duration - duration)
+                    all_texts.append(text)
+                    all_times.append(tc)
+
+                    if duration <= MIN_DURATION:
+                        # Make sure subtitle display duration is not less than `MIN_DURATION` seconds
+                        tc.start -= (MIN_DURATION - duration)
                         continue
-                    if duration - vocal_dur <= vocal_rate:
+                    if duration - vocal_dur <= VOCAL_RATE:
                         continue
                     start += vocal_dur
                     tc.end = start
                 else:
-                    if duration >= invalid_interval:
+                    if duration >= INVALID_INTERVAL:
                         continue
-
-                    if duration > min_duration:
-                        start += max(duration / 5.0, loop_interval)
-                    else:  # Make sure subtitle display duration is not less than `min_duration` seconds
-                        start -= min_duration
-                        start = start if idx > 0 and tc_seconds[idx - 1].end < start else tc.start
+                    if duration > MIN_DURATION:
+                        start += max(duration / 5.0, LOOP_INTERVAL)
+                    else:
+                        # Forward seconds to check if it has subtitle
+                        start = tc.start - VOCAL_RATE
 
                 while start < end:
-                    next_start = start + loop_interval
-                    timecode = Timecode(start, next_start)
+                    next_start = start + LOOP_INTERVAL
+                    timecode = Timecode(start, min(next_start, end))
                     all_texts.append("")
                     all_times.append(timecode)
                     segment_times.append(timecode)
@@ -271,7 +273,11 @@ class Extractor:
 
             self.logger.info(f"Further OCR images with duration: {run_duration(perf_start)}")
 
-            # 4. Write subtitles to a text file
+            # 4. Write timecodes and subtitles to text file
+            with open(self.timecode_file, 'w') as file:
+                for tc in self.timecodes:
+                    file.write(f"{tc.start} --> {tc.end}\n")
+
             with open(self.subtitle_file, 'w') as file:
                 for text in self.sub_texts:
                     file.write(f"{text}\n")
@@ -291,7 +297,7 @@ class Extractor:
 
     @staticmethod
     def cropping_start_time(start):
-        return start + 0.1  # Delay 0.1 seconds for getting correct cropped image
+        return start + VOCAL_RATE  # Delay in seconds for getting correct cropped image
 
     def image_filename(self, start: str):
         name = int(self.cropping_start_time(start) * 1000)
@@ -338,11 +344,11 @@ class Extractor:
                 if result and result != [None]:
                     # [[
                     # [[[191.0, 10.0], [511.0, 10.0], [511.0, 49.0], [191.0, 49.0]], ('CRAB', 0.99381166696)],
-                    # [[[586.0, 0.0], [665.0, 44.0], [650.0, 70.0], [572.0, 22.0]], ('你好吗', 0.9869911670684814)]
+                    # [[[586.0, 0.0], [665.0, 44.0], [650.0, 70.0], [572.0, 22.0]], ('在外面转悠', 0.9869911670684814)]
                     # ]]
                     result = list(chain.from_iterable(result))
                     max_len_ocr = max(result, key=lambda v: len(v[1][0]))
-                    text = max_len_ocr[1][0].strip(" ,;:.·，．。")
+                    text = max_len_ocr[1][0].strip(" ,;.:·，；：．。")
                     ocr_texts.append(text)
                 else:
                     ocr_texts.append("")
@@ -354,7 +360,6 @@ class Extractor:
         self.logger.info(f"Translating subtitle to {TARGET_LANGUAGES}")
 
         subtitles = [Subtitle(lang, [], os.path.join(self.output_dir, f"{lang}.vtt")) for lang in TARGET_LANGUAGES]
-        subtitles[0].contents = self.sub_texts  # Chinese subtitle
 
         def text_to_dict(s: str):
             rst_dict = {}
@@ -396,9 +401,7 @@ class Extractor:
                 self.logger.debug(f"Chat Response: {response}")
                 self.logger.debug(f"Token usage: {response.usage}")
 
-                for i, sub in enumerate(subtitles):
-                    if i == 0:  # Skip Chinese
-                        continue
+                for sub in subtitles:
                     sub.contents = text_to_dict(assist_msg.content)[sub.language]
 
                 # To avoid exceed context window maximum tokens (16,385), keep the first system message and
@@ -417,7 +420,7 @@ class Extractor:
 
             # Write subtitles into VTT files
             for sub in subtitles:
-                self.generate_vtt_subtitle(sub.contents, sub.filename)
+                self.write_vtt_file(sub.contents, sub.filename)
 
             self.logger.info(
                 f"Translation complete with VTT files in dir: {self.output_dir}, with duration: {run_duration(perf_start)}")
@@ -427,21 +430,32 @@ class Extractor:
             self.logger.error(f"Translate subtitle with error: {ex}")
             raise ex
 
-    def generate_subtitle(self, contents: [str] = None, filename: str = None):
-        self.logger.info(f"Generating subtitle with WebVTT format")
-
+    def generate_subtitles(self, languages: [str]):
+        self.logger.info(f"Generating subtitles with WebVTT format")
         perf_start = time.perf_counter()
-        vtt_file = filename if filename else os.path.join(self.output_dir, "Chinese.vtt")
-        texts = contents if contents else self.sub_texts
+        subtitles = [Subtitle(lang, [], os.path.join(self.output_dir, f"{lang}.vtt")) for lang in languages]
 
-        with open(vtt_file, 'w') as file:
+        for sub in subtitles:
+            txt_file = os.path.join(self.output_dir, f"{sub.language}.txt")
+            with open(txt_file, 'r') as file:
+                sub.contents = [line.strip("\n") for line in file.readlines()]
+            self.write_vtt_file(sub.contents, sub.filename)
+
+        self.logger.info(f"Generated subtitles in dir: {self.output_dir}, with duration: {run_duration(perf_start)}")
+
+    def write_vtt_file(self, contents: [str], filename: str):
+        if len(self.timecodes) == 0:
+            with open(self.timecode_file, 'r') as file:
+                for line in file.readlines():
+                    start, end = line.strip("\n").split(" --> ")
+                    self.timecodes.append(Timecode(start, end))
+
+        with open(filename, 'w') as file:
             file.write(WEBVTT_TEMPLATE)
-            for idx, line in enumerate(texts):
+            for idx, line in enumerate(contents):
                 tc = self.timecodes[idx]
                 file.write(f"{tc.start} --> {tc.end}\n")
                 file.write(f"{line}\n\n")
-
-        self.logger.info(f"Generated subtitle with {vtt_file}")
 
     def get_logger(self):
         logger = logging.getLogger(__name__)
