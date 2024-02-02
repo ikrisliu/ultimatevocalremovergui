@@ -348,7 +348,7 @@ class Extractor:
                     # ]]
                     result = list(chain.from_iterable(result))
                     max_len_ocr = max(result, key=lambda v: len(v[1][0]))
-                    text = max_len_ocr[1][0].strip(" ,;.:·，；：．。")
+                    text = max_len_ocr[1][0].strip(" ·，；：．。")
                     ocr_texts.append(text)
                 else:
                     ocr_texts.append("")
