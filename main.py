@@ -48,7 +48,7 @@ def main():
         "--gen_multi_langs",
         type=lambda x: (str(x).lower() == "true"),
         default=False,
-        help="Optional: only generate multi-language subtitles (default: %(default)). Example: --gen_multi_langs=True",
+        help="Optional: only generate multi-language subtitles (default: %(default)s). Example: --gen_multi_langs=True",
     )
 
     parser.add_argument(
