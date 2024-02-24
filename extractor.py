@@ -61,8 +61,11 @@ class Extractor:
             log_level=logging.DEBUG,
             log_formatter=None
     ):
+        def extract_number(s):
+            return int(re.search(r'\d+', s).group())
+
         self.video_dir = video_dir
-        self.video_clips = sorted(os.listdir(video_dir))
+        self.video_clips = sorted(os.listdir(video_dir), key=extract_number)
         self.output_dir = output_dir
         self.subtitle_box = subtitle_box
         self.use_gpu = use_gpu
