@@ -39,6 +39,13 @@ def main():
     )
 
     parser.add_argument(
+        "--reencode",
+        type=lambda x: (str(x).lower() == "true"),
+        default=False,
+        help="Optional: re-encode the video with libx264 and aac audio (default: %(default)s). Example: --reencode=True",
+    )
+
+    parser.add_argument(
         "--sample_duration",
         default=None,
         help="Optional: sample duration in seconds (default: %(default)s). Example: --sample_mode=60",
@@ -75,6 +82,7 @@ def main():
         output_dir=output_dir,
         subtitle_box=args.subtitle_box,
         use_gpu=args.use_gpu,
+        reencode=args.reencode,
         sample_duration=args.sample_duration,
         gen_multi_langs=args.gen_multi_langs,
         log_level=log_level,

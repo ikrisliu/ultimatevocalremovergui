@@ -56,6 +56,7 @@ class Extractor:
             output_dir: str,
             subtitle_box: str,
             use_gpu: bool,
+            reencode: bool,
             sample_duration: float,
             gen_multi_langs: bool,
             log_level=logging.DEBUG,
@@ -69,9 +70,11 @@ class Extractor:
         self.output_dir = output_dir
         self.subtitle_box = subtitle_box
         self.use_gpu = use_gpu
+        self.reencode = reencode
         self.sample_duration = sample_duration
         self.gen_multi_langs = gen_multi_langs
         self.log_level = log_level
+        # self.level_name = logging.getLevelName(log_level).lower()
         self.log_formatter = log_formatter
         self.logger = self.get_logger()
 
@@ -106,12 +109,17 @@ class Extractor:
             with open(list_file, 'w') as file:
                 for vc in self.video_clips:
                     file.write(f"file '{os.path.join(self.video_dir, vc)}'\n")
-            (ffmpeg.input(list_file, f="concat", safe=0).output(self.video_file, c="copy", loglevel=self.log_level)
+
+            # Make sure all your files have the same format, codec, frame rate for video, and sample rate for audio.
+            # ffmpeg -i input.mp4 -c:v copy -c:a aac -ar 44100 output.mp4
+            vc = "h264" if self.reencode else "copy"
+            ac = "aac" if self.reencode else "copy"
+            (ffmpeg.input(list_file, f="concat", safe=0).output(self.video_file, vcodec=vc, acodec=ac, loglevel="error")
              .run(overwrite_output=True))
 
             if self.sample_duration:
                 os.rename(self.video_file, tmp_file)
-                (ffmpeg.input(tmp_file).output(self.video_file, t=self.sample_duration, c="copy", loglevel=self.log_level)
+                (ffmpeg.input(tmp_file).output(self.video_file, t=self.sample_duration, c="copy", loglevel="error")
                  .run(overwrite_output=True))
 
             self.logger.info(f"Merged video file: {self.video_file}, with duration: {run_duration(perf_start)}")
@@ -128,10 +136,10 @@ class Extractor:
         perf_start = time.perf_counter()
         tmp_file = os.path.join(self.output_dir, "audio-tmp.aac")
         try:
-            (ffmpeg.input(self.video_file).output(tmp_file, acodec="copy", loglevel=self.log_level)
+            (ffmpeg.input(self.video_file).output(tmp_file, acodec="copy", loglevel="error")
              .run(overwrite_output=True))
             # Normalize the audio to ensure consistent levels
-            (ffmpeg.input(tmp_file).output(self.audio_file, af="loudnorm=I=-11:LRA=10:TP=0", loglevel=self.log_level)
+            (ffmpeg.input(tmp_file).output(self.audio_file, af="loudnorm=I=-11:LRA=10:TP=0", loglevel="error")
              .run(overwrite_output=True))
             self.logger.info(f"Separated audio file: {self.audio_file}, with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
@@ -318,7 +326,7 @@ class Extractor:
             start = str(self.cropping_start_time(s))
             # Minimize the decoding and seeking operations by using the -ss (seek) option `before` the input file
             cmd.extend(["-ss", start, "-i", self.video_file])
-            cmd.extend(["-vf", f"crop={self.subtitle_box}", "-vframes", "1", "-loglevel", "quiet", file, "-y"])
+            cmd.extend(["-vf", f"crop={self.subtitle_box}", "-vframes", "1", "-loglevel", "error", file, "-y"])
         subprocess.run(cmd)
 
         return output_files
@@ -463,7 +471,6 @@ class Extractor:
     def get_logger(self):
         logger = logging.getLogger(__name__)
         logger.setLevel(self.log_level)
-        log_level = self.log_level
         log_formatter = self.log_formatter
 
         log_handler = logging.StreamHandler()
@@ -477,6 +484,6 @@ class Extractor:
             logger.addHandler(log_handler)
 
         # Filter out noisy warnings from PyTorch for users who don't care about them
-        if log_level > logging.DEBUG:
+        if self.log_level > logging.DEBUG:
             warnings.filterwarnings("ignore")
         return logger
