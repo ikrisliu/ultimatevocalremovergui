@@ -81,8 +81,8 @@ class Extractor:
         self.screenshot_dir = os.path.join(self.output_dir, "screenshots")
         self.video_file = os.path.join(output_dir, "video.mp4")
         self.audio_file = os.path.join(output_dir, "audio.aac")
-        self.vocal_file = os.path.join(output_dir, "vocal.wav")
-        self.instrumental_file = os.path.join(output_dir, "instrumental.wav")
+        self.vocal_file = os.path.join(output_dir, "1_audio_(Vocals).wav")
+        self.instrumental_file = os.path.join(output_dir, "1_audio_(Instrumental).wav")
         self.subtitle_file = os.path.join(output_dir, f"{SOURCE_LANGUAGE}.txt")
         self.timecode_file = os.path.join(output_dir, "timecodes.txt")
         self.timecodes: [Timecode] = []
@@ -96,13 +96,13 @@ class Extractor:
         self.merge_videos()
         self.separate_audio()
         self.separate_vocal()
-        tc = self.detect_audio_timecode()
-        self.ocr_subtitle(tc)
-        self.generate_subtitles([SOURCE_LANGUAGE])
+        # tc = self.detect_audio_timecode()
+        # self.ocr_subtitle(tc)
+        # self.generate_subtitles([SOURCE_LANGUAGE])
 
     def merge_videos(self):
         self.logger.info(f"Merging multiple video files: {self.video_clips}")
-        list_file = "list.txt"
+        list_file = os.path.join(self.output_dir, "list.txt")
 
         perf_start = time.perf_counter()
         tmp_file = os.path.join(self.output_dir, "video-tmp.mp4")
@@ -154,9 +154,13 @@ class Extractor:
         perf_start = time.perf_counter()
 
         def get_audio_duration(file_path: str):
-            command = ['ffprobe', '-i', file_path, '-show_entries', 'format=duration', '-v', 'quiet', '-of', 'csv="p=0"']
-            duration_str = subprocess.check_output(command).decode('utf-8').strip()
-            return float(duration_str)
+            try:
+                command = ['ffprobe', '-i', file_path, '-show_entries', 'format=duration', '-v', 'quiet', '-of', 'csv=p=0']
+                duration_str = subprocess.check_output(command).decode('utf-8').strip()
+                return float(duration_str)
+            except subprocess.CalledProcessError as e:
+                self.logger.error(f"Get audio duration with error: {e}")
+                return 0
 
         duration = get_audio_duration(self.audio_file)
         max_dur = 7200  # in seconds
@@ -164,13 +168,13 @@ class Extractor:
         audio_clips = []
         vocal_files = []
         instrumental_files = []
-        list_file = "list.txt"
+        list_file = os.path.join(self.output_dir, "list.txt")
 
         def clip_audio_files():
             if duration > max_dur:
                 start = 0
-                idx = 0
-                while start <= max_dur:
+                idx = 1
+                while start <= duration:
                     end = start + segment
                     output_file = os.path.join(self.output_dir, f"{idx}.aac")
                     (ffmpeg.input(self.audio_file).output(output_file, ss=start, to=end, c="copy", loglevel="error")
@@ -184,34 +188,26 @@ class Extractor:
         def merge_audio_files(is_vocal: bool):
             with open(list_file, 'w') as lf:
                 suffix = "Vocals" if is_vocal else "Instrumental"
-                for idx, af in enumerate(audio_clips):
+                for idx, af in enumerate(audio_clips, start=1):
                     o_file = os.path.join(self.output_dir, f"{idx}_{idx}_({suffix}).wav")
                     if is_vocal:
                         vocal_files.append(o_file)
                     else:
                         instrumental_files.append(o_file)
                     lf.write(f"file '{o_file}'\n")
-                output_file = self.vocal_file if is_vocal else self.instrumental_file
-                (ffmpeg.input(list_file, f="concat", safe=0).output(output_file, c="copy", loglevel="error")
-                 .run(overwrite_output=True))
+            output_file = self.vocal_file if is_vocal else self.instrumental_file
+            (ffmpeg.input(list_file, f="concat", safe=0).output(output_file, c="copy", loglevel="error")
+             .run(overwrite_output=True))
 
         try:
             clip_audio_files()
 
-            uvr = UVR(
-                input_paths=audio_clips,
-                export_path=self.output_dir,
-            )
+            uvr = UVR(input_paths=audio_clips, export_path=self.output_dir)
             uvr.process_start()
 
-            if len(audio_clips) == 1:
-                os.rename(vocal_files[0], self.vocal_file)
-                os.rename(instrumental_files[0], self.instrumental_file)
-            else:
+            if len(audio_clips) > 1:
                 merge_audio_files(is_vocal=True)
                 merge_audio_files(is_vocal=False)
-        except AttributeError:
-            pass
         except Exception as ex:
             self.logger.error(f"Separate vocal with error: {ex}")
             raise ex
