@@ -81,7 +81,8 @@ class Extractor:
         self.screenshot_dir = os.path.join(self.output_dir, "screenshots")
         self.video_file = os.path.join(output_dir, "video.mp4")
         self.audio_file = os.path.join(output_dir, "audio.aac")
-        self.vocal_file = os.path.join(output_dir, "1_audio_(Vocals).wav")
+        self.vocal_file = os.path.join(output_dir, "vocal.wav")
+        self.instrumental_file = os.path.join(output_dir, "instrumental.wav")
         self.subtitle_file = os.path.join(output_dir, f"{SOURCE_LANGUAGE}.txt")
         self.timecode_file = os.path.join(output_dir, "timecodes.txt")
         self.timecodes: [Timecode] = []
@@ -151,18 +152,79 @@ class Extractor:
     def separate_vocal(self):
         self.logger.info(f"Separating vocal from audio file: {self.audio_file}")
         perf_start = time.perf_counter()
+
+        def get_audio_duration(file_path: str):
+            command = ['ffprobe', '-i', file_path, '-show_entries', 'format=duration', '-v', 'quiet', '-of', 'csv="p=0"']
+            duration_str = subprocess.check_output(command).decode('utf-8').strip()
+            return float(duration_str)
+
+        duration = get_audio_duration(self.audio_file)
+        max_dur = 7200  # in seconds
+        segment = 100 * 60
+        audio_clips = []
+        vocal_files = []
+        instrumental_files = []
+        list_file = "list.txt"
+
+        def clip_audio_files():
+            if duration > max_dur:
+                start = 0
+                idx = 0
+                while start <= max_dur:
+                    end = start + segment
+                    output_file = os.path.join(self.output_dir, f"{idx}.aac")
+                    (ffmpeg.input(self.audio_file).output(output_file, ss=start, to=end, c="copy", loglevel="error")
+                     .run(overwrite_output=True))
+                    audio_clips.append(output_file)
+                    start = end
+                    idx += 1
+            else:
+                audio_clips.append(self.audio_file)
+
+        def merge_audio_files(is_vocal: bool):
+            with open(list_file, 'w') as lf:
+                suffix = "Vocals" if is_vocal else "Instrumental"
+                for idx, af in enumerate(audio_clips):
+                    o_file = os.path.join(self.output_dir, f"{idx}_{idx}_({suffix}).wav")
+                    if is_vocal:
+                        vocal_files.append(o_file)
+                    else:
+                        instrumental_files.append(o_file)
+                    lf.write(f"file '{o_file}'\n")
+                output_file = self.vocal_file if is_vocal else self.instrumental_file
+                (ffmpeg.input(list_file, f="concat", safe=0).output(output_file, c="copy", loglevel="error")
+                 .run(overwrite_output=True))
+
         try:
+            clip_audio_files()
+
             uvr = UVR(
-                input_paths=[self.audio_file],
+                input_paths=audio_clips,
                 export_path=self.output_dir,
             )
             uvr.process_start()
+
+            if len(audio_clips) == 1:
+                os.rename(vocal_files[0], self.vocal_file)
+                os.rename(instrumental_files[0], self.instrumental_file)
+            else:
+                merge_audio_files(is_vocal=True)
+                merge_audio_files(is_vocal=False)
         except AttributeError:
             pass
         except Exception as ex:
             self.logger.error(f"Separate vocal with error: {ex}")
             raise ex
         finally:
+            if len(audio_clips) > 1:
+                for file in audio_clips:
+                    os.remove(file)
+                for file in vocal_files:
+                    os.remove(file)
+                for file in instrumental_files:
+                    os.remove(file)
+            if os.path.exists(list_file):
+                os.remove(list_file)
             self.logger.info(f"Separated vocal file: {self.vocal_file}, with duration: {run_duration(perf_start)}")
 
     def detect_audio_timecode(self):
