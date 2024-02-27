@@ -96,9 +96,9 @@ class Extractor:
         self.merge_videos()
         self.separate_audio()
         self.separate_vocal()
-        # tc = self.detect_audio_timecode()
-        # self.ocr_subtitle(tc)
-        # self.generate_subtitles([SOURCE_LANGUAGE])
+        tc = self.detect_audio_timecode()
+        self.ocr_subtitle(tc)
+        self.generate_subtitles([SOURCE_LANGUAGE])
 
     def merge_videos(self):
         self.logger.info(f"Merging multiple video files: {self.video_clips}")
