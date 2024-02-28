@@ -416,6 +416,10 @@ class Extractor:
                     # [[[586.0, 0.0], [665.0, 44.0], [650.0, 70.0], [572.0, 22.0]], ('在外面转悠', 0.9869911670684814)]
                     # ]]
                     result = list(chain.from_iterable(result))
+                    # Only keep Chinese text
+                    filtered = [v for v in result if re.sub(r'[^\u4e00-\u9fa5]', '', v[1][0])]
+                    result = filtered if len(filtered) > 0 else result
+
                     max_len_ocr = max(result, key=lambda v: len(v[1][0]))
                     text = max_len_ocr[1][0].strip(" ·，；：．。")
                     ocr_texts.append(text)
