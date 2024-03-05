@@ -62,11 +62,13 @@ class Extractor:
             log_level=logging.DEBUG,
             log_formatter=None
     ):
-        def extract_number(s):
-            return int(re.search(r'\d+', s).group())
+        def get_video_clips():
+            clips = [v for v in os.listdir(video_dir) if not v.startswith(".")]
+            clips = sorted(clips, key=lambda s: int(re.search(r'\d+', s).group()))
+            return clips
 
         self.video_dir = video_dir
-        self.video_clips = sorted(os.listdir(video_dir), key=extract_number)
+        self.video_clips = get_video_clips()
         self.output_dir = output_dir
         self.subtitle_box = subtitle_box
         self.use_gpu = use_gpu
@@ -80,6 +82,8 @@ class Extractor:
 
         self.screenshot_dir = os.path.join(self.output_dir, "screenshots")
         self.video_file = os.path.join(output_dir, "video.mp4")
+        self.video_only_file = os.path.join(output_dir, "video_only.mp4")
+        self.video_vocal_file = os.path.join(output_dir, "video_vocal.mp4")
         self.audio_file = os.path.join(output_dir, "audio.aac")
         self.vocal_file = os.path.join(output_dir, "1_audio_(Vocals).wav")
         self.instrumental_file = os.path.join(output_dir, "1_audio_(Instrumental).wav")
@@ -93,9 +97,11 @@ class Extractor:
             self.generate_subtitles(TARGET_LANGUAGES)
             return
 
-        self.merge_videos()
+        if len(self.video_clips) > 0:
+            self.merge_videos()
         self.separate_audio()
         self.separate_vocal()
+        self.merge_video_and_vocal()
         tc = self.detect_audio_timecode()
         self.ocr_subtitle(tc)
         self.generate_subtitles([SOURCE_LANGUAGE])
@@ -135,19 +141,22 @@ class Extractor:
     def separate_audio(self):
         self.logger.info(f"Separating audio from video")
         perf_start = time.perf_counter()
-        tmp_file = os.path.join(self.output_dir, "audio-tmp.aac")
+        audio_tmp_file = os.path.join(self.output_dir, "audio-tmp.aac")
         try:
-            (ffmpeg.input(self.video_file).output(tmp_file, acodec="copy", loglevel="error")
-             .run(overwrite_output=True))
+            # Separate video and audio
+            node = ffmpeg.input(self.video_file)
+            node.output(self.video_only_file, map='0:v', vcodec='copy', loglevel="error").run(overwrite_output=True)
+            node.output(audio_tmp_file, map='0:a', acodec='copy', loglevel="error").run(overwrite_output=True)
+
             # Normalize the audio to ensure consistent levels
-            (ffmpeg.input(tmp_file).output(self.audio_file, af="loudnorm=I=-11:LRA=10:TP=0", loglevel="error")
+            (ffmpeg.input(audio_tmp_file).output(self.audio_file, af="loudnorm=I=-11:LRA=10:TP=0", loglevel="error")
              .run(overwrite_output=True))
             self.logger.info(f"Separated audio file: {self.audio_file}, with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
             self.logger.error(f"Separate audio from video with error: {ex.stderr.decode('utf-8')}")
             raise ex
         finally:
-            os.remove(tmp_file)
+            os.remove(audio_tmp_file)
 
     def separate_vocal(self):
         self.logger.info(f"Separating vocal from audio file: {self.audio_file}")
@@ -222,6 +231,24 @@ class Extractor:
             if os.path.exists(list_file):
                 os.remove(list_file)
             self.logger.info(f"Separated vocal file: {self.vocal_file}, with duration: {run_duration(perf_start)}")
+
+    def merge_video_and_vocal(self):
+        self.logger.info(f"Merging video file: {self.video_only_file}, and vocal audio file: {self.vocal_file}")
+        perf_start = time.perf_counter()
+
+        try:
+            cmd = ["ffmpeg"]
+            if self.use_gpu:
+                cmd.extend(["-hwaccel", "cuda"])
+            cmd.extend(["-i", self.video_only_file, "-i", self.vocal_file, "-loglevel", "error"])
+            cmd.extend(["-c:v", "copy", "-c:a", "aac", self.video_vocal_file, "-y"])
+            subprocess.run(cmd)
+        except Exception as ex:
+            self.logger.error(f"Merge video and vocal audio with error: {ex}")
+            raise ex
+        finally:
+            os.remove(self.video_only_file)
+            self.logger.info(f"Generated video file: {self.video_vocal_file}, with duration: {run_duration(perf_start)}")
 
     def detect_audio_timecode(self):
         self.logger.info(f"Detecting vocal timecodes from vocal file: {self.vocal_file}")
