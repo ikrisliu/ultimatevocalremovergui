@@ -97,8 +97,7 @@ class Extractor:
             self.generate_subtitles(TARGET_LANGUAGES)
             return
 
-        if len(self.video_clips) > 0:
-            self.merge_videos()
+        self.merge_videos()
         self.separate_audio()
         self.separate_vocal()
         self.merge_video_and_vocal()
@@ -111,23 +110,24 @@ class Extractor:
         list_file = os.path.join(self.output_dir, "list.txt")
 
         perf_start = time.perf_counter()
-        tmp_file = os.path.join(self.output_dir, "video-tmp.mp4")
+        sample_file = os.path.join(self.output_dir, "video_sample.mp4")
         try:
-            with open(list_file, 'w') as file:
-                for vc in self.video_clips:
-                    file.write(f"file '{os.path.join(self.video_dir, vc)}'\n")
+            if len(self.video_clips) > 0:
+                with open(list_file, 'w') as file:
+                    for vc in self.video_clips:
+                        file.write(f"file '{os.path.join(self.video_dir, vc)}'\n")
 
-            # Make sure all your files have the same format, codec, frame rate for video, and sample rate for audio.
-            # ffmpeg -i input.mp4 -c:v copy -c:a aac -ar 44100 output.mp4
-            vc = "h264" if self.reencode else "copy"
-            ac = "aac" if self.reencode else "copy"
-            (ffmpeg.input(list_file, f="concat", safe=0).output(self.video_file, vcodec=vc, acodec=ac, loglevel="error")
-             .run(overwrite_output=True))
+                # Make sure all your files have the same format, codec, frame rate for video, and sample rate for audio.
+                # ffmpeg -i input.mp4 -c:v copy -c:a aac -ar 44100 output.mp4
+                vc = "h264" if self.reencode else "copy"
+                ac = "aac" if self.reencode else "copy"
+                (ffmpeg.input(list_file, f="concat", safe=0)
+                 .output(self.video_file, vcodec=vc, acodec=ac, loglevel="error").run(overwrite_output=True))
 
             if self.sample_duration:
-                os.rename(self.video_file, tmp_file)
-                (ffmpeg.input(tmp_file).output(self.video_file, t=self.sample_duration, c="copy", loglevel="error")
+                (ffmpeg.input(self.video_file).output(sample_file, t=self.sample_duration, c="copy", loglevel="error")
                  .run(overwrite_output=True))
+                self.video_file = sample_file
 
             self.logger.info(f"Merged video file: {self.video_file}, with duration: {run_duration(perf_start)}")
         except ffmpeg.Error as ex:
@@ -135,8 +135,8 @@ class Extractor:
             raise ex
         finally:
             os.remove(list_file)
-            if os.path.exists(tmp_file):
-                os.remove(tmp_file)
+            if os.path.exists(sample_file):
+                os.remove(sample_file)
 
     def separate_audio(self):
         self.logger.info(f"Separating audio from video")
