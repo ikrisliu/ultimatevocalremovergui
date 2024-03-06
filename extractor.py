@@ -84,7 +84,7 @@ class Extractor:
         self.video_file = os.path.join(output_dir, "video.mp4")
         self.video_only_file = os.path.join(output_dir, "video_only.mp4")
         self.video_vocal_file = os.path.join(output_dir, "video_vocal.mp4")
-        self.audio_file = os.path.join(output_dir, "audio.aac")
+        self.audio_file = os.path.join(output_dir, "audio.m4a")
         self.vocal_file = os.path.join(output_dir, "1_audio_(Vocals).wav")
         self.instrumental_file = os.path.join(output_dir, "1_audio_(Instrumental).wav")
         self.subtitle_file = os.path.join(output_dir, f"{SOURCE_LANGUAGE}.txt")
@@ -140,7 +140,7 @@ class Extractor:
     def separate_audio(self):
         self.logger.info(f"Separating audio from video")
         perf_start = time.perf_counter()
-        audio_tmp_file = os.path.join(self.output_dir, "audio-tmp.aac")
+        audio_tmp_file = os.path.join(self.output_dir, "audio-tmp.m4a")
         try:
             # Separate video and audio
             node = ffmpeg.input(self.video_file)
@@ -184,7 +184,7 @@ class Extractor:
                 idx = 1
                 while start <= duration:
                     end = start + segment
-                    output_file = os.path.join(self.output_dir, f"{idx}.aac")
+                    output_file = os.path.join(self.output_dir, f"{idx}.m4a")
                     (ffmpeg.input(self.audio_file).output(output_file, ss=start, to=end, c="copy", loglevel="error")
                      .run(overwrite_output=True))
                     audio_clips.append(output_file)
