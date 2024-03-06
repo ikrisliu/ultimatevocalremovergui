@@ -134,9 +134,8 @@ class Extractor:
             self.logger.error(f"Merge video clips with error: {ex.stderr.decode('utf-8')}")
             raise ex
         finally:
-            os.remove(list_file)
-            if os.path.exists(sample_file):
-                os.remove(sample_file)
+            if os.path.exists(list_file):
+                os.remove(list_file)
 
     def separate_audio(self):
         self.logger.info(f"Separating audio from video")
