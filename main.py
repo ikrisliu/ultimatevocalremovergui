@@ -32,6 +32,13 @@ def main():
     )
 
     parser.add_argument(
+        "--multi_lines_subtitle",
+        type=lambda x: (str(x).lower() == "true"),
+        default=False,
+        help="Optional: video has multiple lines subtitle (default: %(default)s). Example: --multi_lines_subtitle=True",
+    )
+
+    parser.add_argument(
         "--use_gpu",
         type=lambda x: (str(x).lower() == "true"),
         default=True,
@@ -81,6 +88,7 @@ def main():
         video_dir=args.video_dir,
         output_dir=output_dir,
         subtitle_box=args.subtitle_box,
+        multi_lines_subtitle=args.multi_lines_subtitle,
         use_gpu=args.use_gpu,
         reencode=args.reencode,
         sample_duration=args.sample_duration,

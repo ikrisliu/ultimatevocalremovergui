@@ -55,6 +55,7 @@ class Extractor:
             self, video_dir: str,
             output_dir: str,
             subtitle_box: str,
+            multi_lines_subtitle: bool,
             use_gpu: bool,
             reencode: bool,
             sample_duration: float,
@@ -71,6 +72,7 @@ class Extractor:
         self.video_clips = get_video_clips()
         self.output_dir = output_dir
         self.subtitle_box = subtitle_box
+        self.multi_lines_subtitle = multi_lines_subtitle
         self.use_gpu = use_gpu
         self.reencode = reencode
         self.sample_duration = sample_duration
@@ -83,7 +85,7 @@ class Extractor:
         self.screenshot_dir = os.path.join(self.output_dir, "screenshots")
         self.video_file = os.path.join(output_dir, "video.mp4")
         self.video_only_file = os.path.join(output_dir, "video_only.mp4")
-        self.video_vocal_file = os.path.join(output_dir, "video_vocal.mp4")
+        self.video_remix_file = os.path.join(output_dir, "video_remix.mp4")
         self.audio_file = os.path.join(output_dir, "audio.m4a")
         self.vocal_file = os.path.join(output_dir, "1_audio_(Vocals).wav")
         self.instrumental_file = os.path.join(output_dir, "1_audio_(Instrumental).wav")
@@ -100,7 +102,7 @@ class Extractor:
         self.merge_videos()
         self.separate_audio()
         self.separate_vocal()
-        self.merge_video_and_vocal()
+        self.remix_video()
         tc = self.detect_audio_timecode()
         self.ocr_subtitle(tc)
         self.generate_subtitles([SOURCE_LANGUAGE])
@@ -185,7 +187,7 @@ class Extractor:
                 while start <= duration:
                     end = start + segment
                     output_file = os.path.join(self.output_dir, f"{idx}.m4a")
-                    (ffmpeg.input(self.audio_file).output(output_file, ss=start, to=end, c="copy", loglevel="error")
+                    (ffmpeg.input(self.audio_file, ss=start, to=end).output(output_file, c="copy", loglevel="error")
                      .run(overwrite_output=True))
                     audio_clips.append(output_file)
                     start = end
@@ -231,8 +233,8 @@ class Extractor:
                 os.remove(list_file)
             self.logger.info(f"Separated vocal file: {self.vocal_file}, with duration: {run_duration(perf_start)}")
 
-    def merge_video_and_vocal(self):
-        self.logger.info(f"Merging video file: {self.video_only_file}, and vocal audio file: {self.vocal_file}")
+    def remix_video(self):
+        self.logger.info(f"Remixing video file: {self.video_only_file}, and vocal audio file: {self.vocal_file}")
         perf_start = time.perf_counter()
 
         try:
@@ -240,14 +242,14 @@ class Extractor:
             if self.use_gpu:
                 cmd.extend(["-hwaccel", "cuda"])
             cmd.extend(["-i", self.video_only_file, "-i", self.vocal_file, "-loglevel", "error"])
-            cmd.extend(["-c:v", "copy", "-c:a", "aac", self.video_vocal_file, "-y"])
+            cmd.extend(["-c:v", "copy", "-c:a", "aac", self.video_remix_file, "-y"])
             subprocess.run(cmd)
         except Exception as ex:
-            self.logger.error(f"Merge video and vocal audio with error: {ex}")
+            self.logger.error(f"Remix video and vocal audio with error: {ex}")
             raise ex
         finally:
             os.remove(self.video_only_file)
-            self.logger.info(f"Generated video file: {self.video_vocal_file}, with duration: {run_duration(perf_start)}")
+            self.logger.info(f"Remixed video file: {self.video_remix_file}, with duration: {run_duration(perf_start)}")
 
     def detect_audio_timecode(self):
         self.logger.info(f"Detecting vocal timecodes from vocal file: {self.vocal_file}")
@@ -446,8 +448,11 @@ class Extractor:
                     filtered = [v for v in result if re.sub(r'[^\u4e00-\u9fa5]', '', v[1][0])]
                     result = filtered if len(filtered) > 0 else result
 
-                    max_len_ocr = max(result, key=lambda v: len(v[1][0]))
-                    text = max_len_ocr[1][0].strip(" ·，；：．。")
+                    if self.multi_lines_subtitle:
+                        text = "".join(map(lambda v: v[1][0], result))
+                    else:
+                        max_len_ocr = max(result, key=lambda v: len(v[1][0]))
+                        text = max_len_ocr[1][0].strip(" ·，；：．。")
                     ocr_texts.append(text)
                 else:
                     ocr_texts.append("")
