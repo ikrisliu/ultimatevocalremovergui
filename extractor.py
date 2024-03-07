@@ -224,7 +224,7 @@ class Extractor:
 
             vocal_duration = get_audio_duration(audio_vocal)
             factor = 1 + (vocal_duration - audio_duration) / audio_duration
-            self.logger.error(f"Change audio speed factor with: {factor}")
+            self.logger.info(f"Change audio speed factor with: {factor}")
 
             (ffmpeg.input(audio_vocal).output(self.vocal_file, filter=f"atempo={factor}", loglevel="error")
              .run(overwrite_output=True))
