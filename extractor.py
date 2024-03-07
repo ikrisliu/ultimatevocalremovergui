@@ -84,11 +84,11 @@ class Extractor:
 
         self.screenshot_dir = os.path.join(self.output_dir, "screenshots")
         self.video_file = os.path.join(output_dir, "video.mp4")
-        self.video_only_file = os.path.join(output_dir, "video_only.mp4")
-        self.video_remix_file = os.path.join(output_dir, "video_remix.mp4")
+        self.video_only_file = os.path.join(output_dir, "video-only.mp4")
+        self.video_remix_file = os.path.join(output_dir, "video-remix.mp4")
         self.audio_file = os.path.join(output_dir, "audio.m4a")
-        self.vocal_file = os.path.join(output_dir, "1_audio_(Vocals).wav")
-        self.instrumental_file = os.path.join(output_dir, "1_audio_(Instrumental).wav")
+        self.vocal_file = os.path.join(output_dir, "audio-vocal.wav")
+        self.instrumental_file = os.path.join(output_dir, "audio-instrumental.wav")
         self.subtitle_file = os.path.join(output_dir, f"{SOURCE_LANGUAGE}.txt")
         self.timecode_file = os.path.join(output_dir, "timecodes.txt")
         self.timecodes: [Timecode] = []
@@ -146,8 +146,8 @@ class Extractor:
         try:
             # Separate video and audio
             node = ffmpeg.input(self.video_file)
-            node.output(self.video_only_file, map='0:v', vcodec='copy', loglevel="error").run(overwrite_output=True)
-            node.output(audio_tmp_file, map='0:a', acodec='copy', loglevel="error").run(overwrite_output=True)
+            node.output(self.video_only_file, an=None, vcodec='copy', loglevel="error").run(overwrite_output=True)
+            node.output(audio_tmp_file, vn=None, acodec='copy', loglevel="error").run(overwrite_output=True)
 
             # Normalize the audio to ensure consistent levels
             (ffmpeg.input(audio_tmp_file).output(self.audio_file, af="loudnorm=I=-11:LRA=10:TP=0", loglevel="error")
@@ -163,6 +163,9 @@ class Extractor:
         self.logger.info(f"Separating vocal from audio file: {self.audio_file}")
         perf_start = time.perf_counter()
 
+        audio_vocal = os.path.join(self.output_dir, "1_audio_(Vocals).wav")
+        audio_inst = os.path.join(self.output_dir, "1_audio_(Instrumental).wav")
+
         def get_audio_duration(file_path: str):
             try:
                 command = ['ffprobe', '-i', file_path, '-show_entries', 'format=duration', '-v', 'quiet', '-of', 'csv=p=0']
@@ -172,7 +175,7 @@ class Extractor:
                 self.logger.error(f"Get audio duration with error: {e}")
                 return 0
 
-        duration = get_audio_duration(self.audio_file)
+        audio_duration = get_audio_duration(self.audio_file)
         max_dur = 7200  # in seconds
         segment = 100 * 60
         audio_clips = []
@@ -181,10 +184,10 @@ class Extractor:
         list_file = os.path.join(self.output_dir, "list.txt")
 
         def clip_audio_files():
-            if duration > max_dur:
+            if audio_duration > max_dur:
                 start = 0
                 idx = 1
-                while start <= duration:
+                while start <= audio_duration:
                     end = start + segment
                     output_file = os.path.join(self.output_dir, f"{idx}.m4a")
                     (ffmpeg.input(self.audio_file, ss=start, to=end).output(output_file, c="copy", loglevel="error")
@@ -205,7 +208,7 @@ class Extractor:
                     else:
                         instrumental_files.append(o_file)
                     lf.write(f"file '{o_file}'\n")
-            output_file = self.vocal_file if is_vocal else self.instrumental_file
+            output_file = audio_vocal if is_vocal else audio_inst
             (ffmpeg.input(list_file, f="concat", safe=0).output(output_file, c="copy", loglevel="error")
              .run(overwrite_output=True))
 
@@ -218,10 +221,21 @@ class Extractor:
             if len(audio_clips) > 1:
                 merge_audio_files(is_vocal=True)
                 merge_audio_files(is_vocal=False)
+
+            vocal_duration = get_audio_duration(audio_vocal)
+            factor = 1 - (vocal_duration - audio_duration) / audio_duration
+            self.logger.error(f"Change audio speed factor with: {factor}")
+
+            (ffmpeg.input(audio_vocal).output(self.vocal_file, filter=f"atempo={factor}", loglevel="error")
+             .run(overwrite_output=True))
+            (ffmpeg.input(audio_inst).output(self.instrumental_file, filter=f"atempo={factor}", loglevel="error")
+             .run(overwrite_output=True))
         except Exception as ex:
             self.logger.error(f"Separate vocal with error: {ex}")
             raise ex
         finally:
+            os.remove(audio_vocal)
+            os.remove(audio_inst)
             if len(audio_clips) > 1:
                 for file in audio_clips:
                     os.remove(file)
