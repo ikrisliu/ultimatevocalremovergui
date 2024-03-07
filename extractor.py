@@ -223,7 +223,7 @@ class Extractor:
                 merge_audio_files(is_vocal=False)
 
             vocal_duration = get_audio_duration(audio_vocal)
-            factor = 1 - (vocal_duration - audio_duration) / audio_duration
+            factor = 1 + (vocal_duration - audio_duration) / audio_duration
             self.logger.error(f"Change audio speed factor with: {factor}")
 
             (ffmpeg.input(audio_vocal).output(self.vocal_file, filter=f"atempo={factor}", loglevel="error")
