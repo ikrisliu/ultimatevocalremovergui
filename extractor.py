@@ -112,7 +112,7 @@ class Extractor:
         list_file = os.path.join(self.output_dir, "list.txt")
 
         perf_start = time.perf_counter()
-        sample_file = os.path.join(self.output_dir, "video_sample.mp4")
+        sample_file = os.path.join(self.output_dir, "video-sample.mp4")
         try:
             if len(self.video_clips) > 0:
                 with open(list_file, 'w') as file:
