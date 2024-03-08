@@ -13,7 +13,7 @@ STYLE
 """
 
 SOURCE_LANGUAGE = "Chinese"
-TARGET_LANGUAGES = ["English"]
+TARGET_LANGUAGES = ["Chinese", "English"]
 
 OPENAI_MODEL = "gpt-3.5-turbo-1106"
 OPENAI_SYSTEM_MESSAGE = {
