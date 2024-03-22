@@ -58,6 +58,7 @@ class Extractor:
             multi_lines_subtitle: bool,
             use_gpu: bool,
             reencode: bool,
+            preprocess: bool,
             sample_duration: float,
             gen_multi_langs: bool,
             log_level=logging.DEBUG,
@@ -75,6 +76,7 @@ class Extractor:
         self.multi_lines_subtitle = multi_lines_subtitle
         self.use_gpu = use_gpu
         self.reencode = reencode
+        self.preprocess = preprocess
         self.sample_duration = sample_duration
         self.gen_multi_langs = gen_multi_langs
         self.log_level = log_level
@@ -99,10 +101,12 @@ class Extractor:
             self.generate_subtitles(TARGET_LANGUAGES)
             return
 
-        self.merge_videos()
-        self.separate_audio()
-        self.separate_vocal()
-        self.remix_video()
+        if self.preprocess:
+            self.merge_videos()
+            self.separate_audio()
+            self.separate_vocal()
+            self.remix_video()
+
         tc = self.detect_audio_timecode()
         self.ocr_subtitle(tc)
         self.generate_subtitles([SOURCE_LANGUAGE])

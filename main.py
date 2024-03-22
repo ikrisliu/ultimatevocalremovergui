@@ -53,6 +53,13 @@ def main():
     )
 
     parser.add_argument(
+        "--preprocess",
+        type=lambda x: (str(x).lower() == "true"),
+        default=True,
+        help="Optional: Preprocess the video - Merging, Separating (default: %(default)s). Example: --preprocess=False",
+    )
+
+    parser.add_argument(
         "--sample_duration",
         default=None,
         help="Optional: sample duration in seconds (default: %(default)s). Example: --sample_mode=60",
@@ -91,6 +98,7 @@ def main():
         multi_lines_subtitle=args.multi_lines_subtitle,
         use_gpu=args.use_gpu,
         reencode=args.reencode,
+        preprocess=args.preprocess,
         sample_duration=args.sample_duration,
         gen_multi_langs=args.gen_multi_langs,
         log_level=log_level,
