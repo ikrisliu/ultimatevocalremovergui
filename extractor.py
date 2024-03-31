@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import json
 import logging
 import warnings
 import shutil
@@ -8,6 +9,7 @@ import ffmpeg
 import subprocess
 import multiprocessing
 from dataclasses import dataclass
+from collections import Counter
 from dotenv import load_dotenv
 from itertools import chain
 from datetime import datetime, timedelta
@@ -42,6 +44,12 @@ class Subtitle:
     language: str
     contents: [str]
     filename: str
+
+
+@dataclass
+class VideoMetadata:
+    resolution: str
+    frame_rate: str
 
 
 VOCAL_RATE = 0.15           # Say one word in seconds
@@ -117,18 +125,56 @@ class Extractor:
 
         perf_start = time.perf_counter()
         sample_file = os.path.join(self.output_dir, "video-sample.mp4")
+
+        def get_video_metadata(video_file: str):
+            c = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'json', video_file]
+            result = subprocess.run(c, capture_output=True, text=True)
+            output = json.loads(result.stdout)
+            self.logger.debug(output)
+
+            width = output['streams'][0]['width']
+            height = output['streams'][0]['height']
+            fps = eval(output['streams'][0]['r_frame_rate'])
+            return VideoMetadata(resolution=f"{width}x{height}", frame_rate=fps)
+
         try:
             if len(self.video_clips) > 0:
+                clips_metadata = []
                 with open(list_file, 'w') as file:
                     for vc in self.video_clips:
-                        file.write(f"file '{os.path.join(self.video_dir, vc)}'\n")
+                        video_file = os.path.join(self.video_dir, vc)
+                        file.write(f"file '{video_file}'\n")
+                        clips_metadata.append(get_video_metadata(video_file))
+
+                for meta in clips_metadata:
+                    self.logger.info(meta)
+
+                check_result = True
+                resolutions = list(map(lambda v: v.resolution, clips_metadata))
+                frame_rates = list(map(lambda v: v.frame_rate, clips_metadata))
+                video_res = Counter(resolutions).most_common(1)[0][0]
+                if len(set(resolutions)) != 1:
+                    check_result = False
+                    self.logger.error("The video clips' resolution are not same.")
+                if len(set(frame_rates)) != 1:
+                    check_result = False
+                    self.logger.error("The video clips' frame rate are not same.")
+
+                if not self.reencode and not self.sample_duration:
+                    if not check_result:
+                        raise Exception
 
                 # Make sure all your files have the same format, codec, frame rate for video, and sample rate for audio.
                 # ffmpeg -i input.mp4 -c:v copy -c:a aac -ar 44100 output.mp4
-                vc = "h264" if self.reencode else "copy"
-                ac = "aac" if self.reencode else "copy"
-                (ffmpeg.input(list_file, f="concat", safe=0)
-                 .output(self.video_file, vcodec=vc, acodec=ac, loglevel="error").run(overwrite_output=True))
+                cmd = ["ffmpeg", "-f", "concat", "-safe", "0", "-i", list_file]
+                if self.reencode:
+                    cmd.extend(["-s", video_res if video_res else "720x1280"])
+                    cmd.extend(["-c:v", "h264", "-r", "25"])
+                    cmd.extend(["-c:a", "aac", "-ar", "44100"])
+                else:
+                    cmd.extend(["-c", "copy"])
+                cmd.extend(["-loglevel", "error", self.video_file])
+                subprocess.run(cmd)
 
             if self.sample_duration:
                 (ffmpeg.input(self.video_file).output(sample_file, t=self.sample_duration, c="copy", loglevel="error")
