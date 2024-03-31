@@ -72,13 +72,7 @@ class Extractor:
             log_level=logging.DEBUG,
             log_formatter=None
     ):
-        def get_video_clips():
-            clips = [v for v in os.listdir(video_dir) if not v.startswith(".")]
-            clips = sorted(clips, key=lambda s: int(re.search(r'\d+', s).group()))
-            return clips
-
         self.video_dir = video_dir
-        self.video_clips = get_video_clips()
         self.output_dir = output_dir
         self.subtitle_box = subtitle_box
         self.multi_lines_subtitle = multi_lines_subtitle
@@ -120,14 +114,20 @@ class Extractor:
         self.generate_subtitles([SOURCE_LANGUAGE])
 
     def merge_videos(self):
-        self.logger.info(f"Merging multiple video files: {self.video_clips}")
+        def get_video_clips(folder: str):
+            clips = [v for v in os.listdir(folder) if not v.startswith(".")]
+            clips = sorted(clips, key=lambda s: int(re.search(r'\d+', s).group()))
+            return clips
+
+        video_clips = get_video_clips(self.video_dir)
+        self.logger.info(f"Merging multiple video files: {video_clips}")
         list_file = os.path.join(self.output_dir, "list.txt")
 
         perf_start = time.perf_counter()
         sample_file = os.path.join(self.output_dir, "video-sample.mp4")
 
-        def get_video_metadata(video_file: str):
-            c = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'json', video_file]
+        def get_video_metadata(file_path: str):
+            c = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'json', file_path]
             result = subprocess.run(c, capture_output=True, text=True)
             output = json.loads(result.stdout)
             self.logger.debug(output)
@@ -138,16 +138,19 @@ class Extractor:
             return VideoMetadata(resolution=f"{width}x{height}", frame_rate=fps)
 
         try:
-            if len(self.video_clips) > 0:
+            if len(video_clips) > 0:
                 clips_metadata = []
+                for vc in video_clips:
+                    video_file = os.path.join(self.video_dir, vc)
+                    meta = get_video_metadata(video_file)
+                    clips_metadata.append(meta)
+                    self.logger.info(meta)
+
                 with open(list_file, 'w') as file:
-                    for vc in self.video_clips:
+                    for vc in video_clips:
                         video_file = os.path.join(self.video_dir, vc)
                         file.write(f"file '{video_file}'\n")
                         clips_metadata.append(get_video_metadata(video_file))
-
-                for meta in clips_metadata:
-                    self.logger.info(meta)
 
                 check_result = True
                 resolutions = list(map(lambda v: v.resolution, clips_metadata))
@@ -165,13 +168,29 @@ class Extractor:
                         raise Exception
 
                 # Make sure all your files have the same format, codec, frame rate for video, and sample rate for audio.
-                # ffmpeg -i input.mp4 -c:v copy -c:a aac -ar 44100 output.mp4
-                cmd = ["ffmpeg", "-f", "concat", "-safe", "0", "-i", list_file]
+                cmd = ["ffmpeg"]
+                if self.use_gpu:
+                    cmd.extend(["-hwaccel", "cuda"])
+
                 if self.reencode:
+                    for vc in video_clips:
+                        video_file = os.path.join(self.video_dir, vc)
+                        cmd.extend(["-i", video_file])
+
+                    filter_complex = ""
+                    for i in range(len(video_clips)):
+                        filter_complex += f"[{i}:v]setpts=PTS-STARTPTS[v{i}];"
+                    for i in range(len(video_clips)):
+                        filter_complex += f"[v{i}][{i}:a]"
+                    filter_complex += f"concat=n={len(video_clips)}:v=1:a=1[v][a]"
+
+                    cmd.extend(["-filter_complex", filter_complex])
+                    cmd.extend(["-map", "[v]", "-map", "[a]"])
                     cmd.extend(["-s", video_res if video_res else "720x1280"])
                     cmd.extend(["-c:v", "h264", "-r", "25"])
                     cmd.extend(["-c:a", "aac", "-ar", "44100"])
                 else:
+                    cmd.extend(["-f", "concat", "-safe", "0", "-i", list_file])
                     cmd.extend(["-c", "copy"])
                 cmd.extend(["-loglevel", "error", self.video_file])
                 subprocess.run(cmd)
@@ -188,6 +207,29 @@ class Extractor:
         finally:
             if os.path.exists(list_file):
                 os.remove(list_file)
+
+    # def preprocess_videos(self, video_files: [str]):
+    #     chunk_size = 20
+    #     chunks = [video_files[i:i + chunk_size] for i in range(0, len(video_files), chunk_size)]
+    #
+    #     if os.path.exists(self.video_enc_dir):
+    #         shutil.rmtree(self.video_enc_dir)
+    #     os.makedirs(self.video_enc_dir)
+    #
+    #     with multiprocessing.Pool() as pool:
+    #         pool.map(self.process_video_by_batch, chunks)
+    #     return self.video_enc_dir
+    #
+    # def process_video_by_batch(self, ff: [str]):
+    #     cmd = ["ffmpeg"]
+    #     if self.use_gpu:
+    #         cmd.extend(["-hwaccel", "cuda"])
+    #
+    #     for f in ff:
+    #         i = os.path.join(self.video_dir, f)
+    #         o = os.path.join(self.video_enc_dir, f)
+    #         cmd.extend(["-i", i, "-filter:v", "setpts=PTS-STARTPTS", "-c:a", "copy", "-loglevel", "error", o, "-y"])
+    #     subprocess.run(cmd)
 
     def separate_audio(self):
         self.logger.info(f"Separating audio from video")
@@ -354,7 +396,7 @@ class Extractor:
         start_time = time.perf_counter()
         try:
             # 1. Crop images according to timecodes(second) and do the OCR
-            img_files = self.batch_crop_images(tc_seconds)
+            img_files = self.crop_images(tc_seconds)
 
             self.logger.info(f"OCR images ...")
             perf_start = time.perf_counter()
@@ -402,7 +444,7 @@ class Extractor:
                     segment_times.append(timecode)
                     start = next_start
 
-            self.batch_crop_images(segment_times)
+            self.crop_images(segment_times)
 
             # 3. Further OCR text handling (Duplicated or empty subtitles)
             def upsert(s: str, t: Timecode):
@@ -464,24 +506,7 @@ class Extractor:
         name = int(self.cropping_start_time(start) * 1000)
         return os.path.join(self.screenshot_dir, f"{name:010}.jpg")
 
-    def crop_images(self, ss: [str]):
-        output_files = []
-        cmd = ["ffmpeg"]
-        if self.use_gpu:
-            cmd.extend(["-hwaccel", "cuda"])
-
-        for s in ss:
-            file = self.image_filename(s)
-            output_files.append(file)
-            start = str(self.cropping_start_time(s))
-            # Minimize the decoding and seeking operations by using the -ss (seek) option `before` the input file
-            cmd.extend(["-ss", start, "-i", self.video_file])
-            cmd.extend(["-vf", f"crop={self.subtitle_box}", "-vframes", "1", "-loglevel", "error", file, "-y"])
-        subprocess.run(cmd)
-
-        return output_files
-
-    def batch_crop_images(self, timecodes: [Timecode]):
+    def crop_images(self, timecodes: [Timecode]):
         chunk_size = 1
         tt = [tc.start for tc in timecodes]
         chunks = [tt[i:i + chunk_size] for i in range(0, len(tt), chunk_size)]
@@ -489,11 +514,28 @@ class Extractor:
         perf_start = time.perf_counter()
         self.logger.info(f"Cropping images base on timecodes by batch size {chunk_size} ...")
         with multiprocessing.Pool() as pool:
-            img_files = pool.map(self.crop_images, chunks)
+            img_files = pool.map(self.crop_image_by_batch, chunks)
         img_files = [file for chunk_file in img_files for file in chunk_file]
         self.logger.info(f"Cropped images base on timecodes with duration: {run_duration(perf_start)}")
 
         return img_files
+
+    def crop_image_by_batch(self, ss: [str]):
+        out_files = []
+        cmd = ["ffmpeg"]
+        if self.use_gpu:
+            cmd.extend(["-hwaccel", "cuda"])
+
+        for s in ss:
+            file = self.image_filename(s)
+            out_files.append(file)
+            start = str(self.cropping_start_time(s))
+            # Minimize the decoding and seeking operations by using the -ss (seek) option `before` the input file
+            cmd.extend(["-ss", start, "-i", self.video_file])
+            cmd.extend(["-vf", f"crop={self.subtitle_box}", "-vframes", "1", "-loglevel", "error", file, "-y"])
+        subprocess.run(cmd)
+
+        return out_files
 
     def do_ocr(self, ocr: PaddleOCR, img_files: [str]):
         ocr_texts = []
