@@ -56,6 +56,7 @@ VOCAL_RATE = 0.15           # Say one word in seconds
 LOOP_INTERVAL = 0.5         # Loop interval in seconds
 MIN_DURATION = 0.5          # Subtitle display minimum duration
 INVALID_INTERVAL = 10.0     # Vocal duration exceeds 10s means invalid
+DEFAULT_FRAME_RATE = "25"   # The video default frame rate
 
 
 class Extractor:
@@ -66,6 +67,7 @@ class Extractor:
             multi_lines_subtitle: bool,
             use_gpu: bool,
             reencode: bool,
+            encode_res: str,
             preprocess: bool,
             sample_duration: float,
             gen_multi_langs: bool,
@@ -78,6 +80,7 @@ class Extractor:
         self.multi_lines_subtitle = multi_lines_subtitle
         self.use_gpu = use_gpu
         self.reencode = reencode
+        self.encode_res = encode_res
         self.preprocess = preprocess
         self.sample_duration = sample_duration
         self.gen_multi_langs = gen_multi_langs
@@ -155,7 +158,6 @@ class Extractor:
                 check_result = True
                 resolutions = list(map(lambda v: v.resolution, clips_metadata))
                 frame_rates = list(map(lambda v: v.frame_rate, clips_metadata))
-                video_res = Counter(resolutions).most_common(1)[0][0]
                 if len(set(resolutions)) != 1:
                     check_result = False
                     self.logger.error("The video clips' resolution are not same.")
@@ -178,6 +180,8 @@ class Extractor:
                         cmd.extend(["-i", video_file])
 
                     filter_complex = ""
+                    video_res = self.encode_res if self.encode_res else Counter(resolutions).most_common(1)[0][0]
+
                     for i in range(len(video_clips)):
                         filter_complex += f"[{i}:v]setpts=PTS-STARTPTS[v{i}];"
                     for i in range(len(video_clips)):
@@ -187,13 +191,24 @@ class Extractor:
                     cmd.extend(["-filter_complex", filter_complex])
                     cmd.extend(["-map", "[v]", "-map", "[a]"])
                     cmd.extend(["-s", video_res if video_res else "720x1280"])
-                    cmd.extend(["-c:v", "h264", "-r", "25"])
+                    cmd.extend(["-c:v", "h264", "-r", DEFAULT_FRAME_RATE])
                     cmd.extend(["-c:a", "aac", "-ar", "44100"])
                 else:
                     cmd.extend(["-f", "concat", "-safe", "0", "-i", list_file])
                     cmd.extend(["-c", "copy"])
                 cmd.extend(["-loglevel", "error", self.video_file])
                 subprocess.run(cmd)
+
+                if self.reencode:
+                    try:
+                        output = os.path.join(self.output_dir, "video-enc.mp4")
+                        cmd = ["fr.handbrake.HandBrakeCLI", "-i", self.video_file, "-e", "x265", "-r", DEFAULT_FRAME_RATE, "-o", output]
+                        subprocess.run(cmd)
+                        if os.path.exists(output):
+                            os.remove(self.video_file)
+                            os.rename(output, self.video_file)
+                    except Exception as ex:
+                        self.logger.error(ex)
 
             if self.sample_duration:
                 (ffmpeg.input(self.video_file).output(sample_file, t=self.sample_duration, c="copy", loglevel="error")

@@ -53,6 +53,12 @@ def main():
     )
 
     parser.add_argument(
+        "--encode_res",
+        default=None,
+        help="Optional: re-encode video resolution (default: %(default)s). Example: --encode_res=720x1280"
+    )
+
+    parser.add_argument(
         "--preprocess",
         type=lambda x: (str(x).lower() == "true"),
         default=True,
@@ -98,6 +104,7 @@ def main():
         multi_lines_subtitle=args.multi_lines_subtitle,
         use_gpu=args.use_gpu,
         reencode=args.reencode,
+        encode_res=args.encode_res,
         preprocess=args.preprocess,
         sample_duration=args.sample_duration,
         gen_multi_langs=args.gen_multi_langs,
