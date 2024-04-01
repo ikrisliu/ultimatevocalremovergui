@@ -68,6 +68,7 @@ class Extractor:
             use_gpu: bool,
             reencode: bool,
             encode_res: str,
+            encode_bitrate: str,
             preprocess: bool,
             sample_duration: float,
             gen_multi_langs: bool,
@@ -81,6 +82,7 @@ class Extractor:
         self.use_gpu = use_gpu
         self.reencode = reencode
         self.encode_res = encode_res
+        self.encode_bitrate = encode_bitrate
         self.preprocess = preprocess
         self.sample_duration = sample_duration
         self.gen_multi_langs = gen_multi_langs
@@ -132,12 +134,12 @@ class Extractor:
         def get_video_metadata(file_path: str):
             c = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'json', file_path]
             result = subprocess.run(c, capture_output=True, text=True)
-            output = json.loads(result.stdout)
-            self.logger.debug(output)
+            json_obj = json.loads(result.stdout)
+            self.logger.debug(json_obj)
 
-            width = output['streams'][0]['width']
-            height = output['streams'][0]['height']
-            fps = eval(output['streams'][0]['r_frame_rate'])
+            width = json_obj['streams'][0]['width']
+            height = json_obj['streams'][0]['height']
+            fps = eval(json_obj['streams'][0]['r_frame_rate'])
             return VideoMetadata(resolution=f"{width}x{height}", frame_rate=fps)
 
         try:
@@ -201,12 +203,15 @@ class Extractor:
 
                 if self.reencode:
                     try:
-                        output = os.path.join(self.output_dir, "video-enc.mp4")
-                        cmd = ["fr.handbrake.HandBrakeCLI", "-i", self.video_file, "-e", "x265", "-r", DEFAULT_FRAME_RATE, "-o", output]
+                        out_file = os.path.join(self.output_dir, "video-enc.mp4")
+                        cmd = ["fr.handbrake.HandBrakeCLI", "-i", self.video_file, "-e", "x265", "-r", DEFAULT_FRAME_RATE]
+                        if self.encode_bitrate:
+                            cmd.extend(["-b", self.encode_bitrate])
+                        cmd.extend(["-o", out_file])
                         subprocess.run(cmd)
-                        if os.path.exists(output):
+                        if os.path.exists(out_file):
                             os.remove(self.video_file)
-                            os.rename(output, self.video_file)
+                            os.rename(out_file, self.video_file)
                     except Exception as ex:
                         self.logger.error(ex)
 
@@ -222,29 +227,6 @@ class Extractor:
         finally:
             if os.path.exists(list_file):
                 os.remove(list_file)
-
-    # def preprocess_videos(self, video_files: [str]):
-    #     chunk_size = 20
-    #     chunks = [video_files[i:i + chunk_size] for i in range(0, len(video_files), chunk_size)]
-    #
-    #     if os.path.exists(self.video_enc_dir):
-    #         shutil.rmtree(self.video_enc_dir)
-    #     os.makedirs(self.video_enc_dir)
-    #
-    #     with multiprocessing.Pool() as pool:
-    #         pool.map(self.process_video_by_batch, chunks)
-    #     return self.video_enc_dir
-    #
-    # def process_video_by_batch(self, ff: [str]):
-    #     cmd = ["ffmpeg"]
-    #     if self.use_gpu:
-    #         cmd.extend(["-hwaccel", "cuda"])
-    #
-    #     for f in ff:
-    #         i = os.path.join(self.video_dir, f)
-    #         o = os.path.join(self.video_enc_dir, f)
-    #         cmd.extend(["-i", i, "-filter:v", "setpts=PTS-STARTPTS", "-c:a", "copy", "-loglevel", "error", o, "-y"])
-    #     subprocess.run(cmd)
 
     def separate_audio(self):
         self.logger.info(f"Separating audio from video")

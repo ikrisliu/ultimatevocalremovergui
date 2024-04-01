@@ -55,7 +55,13 @@ def main():
     parser.add_argument(
         "--encode_res",
         default=None,
-        help="Optional: re-encode video resolution (default: %(default)s). Example: --encode_res=720x1280"
+        help="Optional: re-encode video with resolution (default: %(default)s). Example: --encode_res=720x1280"
+    )
+
+    parser.add_argument(
+        "--encode_bitrate",
+        default=None,
+        help="Optional: re-encode video with bitrate (default: %(default)s). Example: --encode_bitrate=2048"
     )
 
     parser.add_argument(
@@ -105,6 +111,7 @@ def main():
         use_gpu=args.use_gpu,
         reencode=args.reencode,
         encode_res=args.encode_res,
+        encode_bitrate=args.encode_bitrate,
         preprocess=args.preprocess,
         sample_duration=args.sample_duration,
         gen_multi_langs=args.gen_multi_langs,
