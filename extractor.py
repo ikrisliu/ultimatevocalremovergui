@@ -140,7 +140,7 @@ class Extractor:
             width = json_obj['streams'][0]['width']
             height = json_obj['streams'][0]['height']
             fps = eval(json_obj['streams'][0]['r_frame_rate'])
-            return VideoMetadata(resolution=f"{width}x{height}", frame_rate=fps)
+            return VideoMetadata(resolution=f"{width}:{height}", frame_rate=fps)
 
         try:
             if len(video_clips) > 0:
@@ -186,14 +186,13 @@ class Extractor:
                     video_res = video_res if video_res else "720:1280"
 
                     for i in range(len(video_clips)):
-                        filter_complex += f"[{i}:v]setpts=PTS-STARTPTS[v{i}];"
+                        filter_complex += f"[{i}:v]scale={video_res},setsar=1:1,fps={DEFAULT_FRAME_RATE},setpts=PTS-STARTPTS[v{i}];"
                     for i in range(len(video_clips)):
                         filter_complex += f"[v{i}][{i}:a]"
                     filter_complex += f"concat=n={len(video_clips)}:v=1:a=1[v][a]"
 
                     cmd.extend(["-filter_complex", filter_complex])
                     cmd.extend(["-map", "[v]", "-map", "[a]"])
-                    cmd.extend(["-vf", f"scale={video_res},fps={DEFAULT_FRAME_RATE}"])
                     cmd.extend(["-c:v", "h264", "-c:a", "aac", "-ar", "44100"])
                 else:
                     cmd.extend(["-f", "concat", "-safe", "0", "-i", list_file])
