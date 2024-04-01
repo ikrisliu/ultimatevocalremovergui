@@ -50,6 +50,7 @@ class Subtitle:
 class VideoMetadata:
     resolution: str
     frame_rate: str
+    sample_rate: str
 
 
 VOCAL_RATE = 0.15           # Say one word in seconds
@@ -132,15 +133,19 @@ class Extractor:
         sample_file = os.path.join(self.output_dir, "video-sample.mp4")
 
         def get_video_metadata(file_path: str):
-            c = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'json', file_path]
+            c = ['ffprobe', '-v', 'error']
+            c.extend(['-show_entries', 'stream=width,height,r_frame_rate,sample_rate'])
+            c.extend(['-of', 'json', file_path])
             result = subprocess.run(c, capture_output=True, text=True)
             json_obj = json.loads(result.stdout)
             self.logger.debug(json_obj)
 
-            width = json_obj['streams'][0]['width']
-            height = json_obj['streams'][0]['height']
-            fps = eval(json_obj['streams'][0]['r_frame_rate'])
-            return VideoMetadata(resolution=f"{width}:{height}", frame_rate=fps)
+            streams = json_obj['streams']
+            width = streams[0]['width']
+            height = streams[0]['height']
+            fps = eval(streams[0]['r_frame_rate'])
+            sample_rate = streams[1]['sample_rate']
+            return VideoMetadata(resolution=f"{width}:{height}", frame_rate=fps, sample_rate=sample_rate)
 
         try:
             if len(video_clips) > 0:
@@ -160,12 +165,16 @@ class Extractor:
                 check_result = True
                 resolutions = list(map(lambda v: v.resolution, clips_metadata))
                 frame_rates = list(map(lambda v: v.frame_rate, clips_metadata))
+                sample_rates = list(map(lambda v: v.sample_rate, clips_metadata))
                 if len(set(resolutions)) != 1:
                     check_result = False
-                    self.logger.error("The video clips' resolution are not same.")
+                    self.logger.error("The videos' resolution are not same.")
                 if len(set(frame_rates)) != 1:
                     check_result = False
-                    self.logger.error("The video clips' frame rate are not same.")
+                    self.logger.error("The videos' frame rate are not same.")
+                if len(set(sample_rates)) != 1:
+                    check_result = False
+                    self.logger.error("The audios' sample rate are not same.")
 
                 if not self.reencode and not self.sample_duration:
                     if not check_result:
