@@ -55,7 +55,7 @@ def main():
     parser.add_argument(
         "--encode_res",
         default=None,
-        help="Optional: re-encode video with resolution (default: %(default)s). Example: --encode_res=720x1280"
+        help="Optional: re-encode video with resolution (default: %(default)s). Example: --encode_res=720:1280"
     )
 
     parser.add_argument(

@@ -183,6 +183,7 @@ class Extractor:
 
                     filter_complex = ""
                     video_res = self.encode_res if self.encode_res else Counter(resolutions).most_common(1)[0][0]
+                    video_res = video_res if video_res else "720:1280"
 
                     for i in range(len(video_clips)):
                         filter_complex += f"[{i}:v]setpts=PTS-STARTPTS[v{i}];"
@@ -192,9 +193,8 @@ class Extractor:
 
                     cmd.extend(["-filter_complex", filter_complex])
                     cmd.extend(["-map", "[v]", "-map", "[a]"])
-                    cmd.extend(["-s", video_res if video_res else "720x1280"])
-                    cmd.extend(["-c:v", "h264", "-r", DEFAULT_FRAME_RATE])
-                    cmd.extend(["-c:a", "aac", "-ar", "44100"])
+                    cmd.extend(["-vf", f"scale={video_res},fps={DEFAULT_FRAME_RATE}"])
+                    cmd.extend(["-c:v", "h264", "-c:a", "aac", "-ar", "44100"])
                 else:
                     cmd.extend(["-f", "concat", "-safe", "0", "-i", list_file])
                     cmd.extend(["-c", "copy"])
