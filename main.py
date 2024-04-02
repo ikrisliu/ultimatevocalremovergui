@@ -59,9 +59,9 @@ def main():
     )
 
     parser.add_argument(
-        "--encode_bitrate",
+        "--encode_crf",
         default=None,
-        help="Optional: re-encode video with bitrate (default: %(default)s). Example: --encode_bitrate=2048"
+        help="Optional: re-encode video with constant rate frame (default: %(default)s). Example: --encode_crf=22"
     )
 
     parser.add_argument(
@@ -111,7 +111,7 @@ def main():
         use_gpu=args.use_gpu,
         reencode=args.reencode,
         encode_res=args.encode_res,
-        encode_bitrate=args.encode_bitrate,
+        encode_crf=args.encode_crf,
         preprocess=args.preprocess,
         sample_duration=args.sample_duration,
         gen_multi_langs=args.gen_multi_langs,

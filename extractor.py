@@ -69,7 +69,7 @@ class Extractor:
             use_gpu: bool,
             reencode: bool,
             encode_res: str,
-            encode_bitrate: str,
+            encode_crf: str,
             preprocess: bool,
             sample_duration: float,
             gen_multi_langs: bool,
@@ -83,7 +83,7 @@ class Extractor:
         self.use_gpu = use_gpu
         self.reencode = reencode
         self.encode_res = encode_res
-        self.encode_bitrate = encode_bitrate
+        self.encode_crf = encode_crf
         self.preprocess = preprocess
         self.sample_duration = sample_duration
         self.gen_multi_langs = gen_multi_langs
@@ -182,9 +182,6 @@ class Extractor:
 
                 # Make sure all your files have the same format, codec, frame rate for video, and sample rate for audio.
                 cmd = ["ffmpeg"]
-                if self.use_gpu:
-                    cmd.extend(["-hwaccel", "cuda"])
-
                 if self.reencode:
                     for vc in video_clips:
                         video_file = os.path.join(self.video_dir, vc)
@@ -193,6 +190,8 @@ class Extractor:
                     filter_complex = ""
                     video_res = self.encode_res if self.encode_res else Counter(resolutions).most_common(1)[0][0]
                     video_res = video_res if video_res else "720:1280"
+                    video_width = video_res.split(":")[0]
+                    crf = self.encode_crf if self.encode_crf else "21" if video_width == "1080" else "23"
 
                     for i in range(len(video_clips)):
                         filter_complex += f"[{i}:v]scale={video_res},setsar=1:1,fps={DEFAULT_FRAME_RATE},setpts=PTS-STARTPTS[v{i}];"
@@ -202,26 +201,13 @@ class Extractor:
 
                     cmd.extend(["-filter_complex", filter_complex])
                     cmd.extend(["-map", "[v]", "-map", "[a]"])
-                    cmd.extend(["-c:v", "h264", "-c:a", "aac", "-ar", "44100"])
+                    cmd.extend(["-c:v", "h264", "-crf", crf, "-preset", "fast", "-profile:v", "high"])
+                    cmd.extend(["-c:a", "aac", "-ar", "44100"])
                 else:
                     cmd.extend(["-f", "concat", "-safe", "0", "-i", list_file])
                     cmd.extend(["-c", "copy"])
                 cmd.extend(["-loglevel", "error", self.video_file])
                 subprocess.run(cmd)
-
-                if self.reencode:
-                    try:
-                        out_file = os.path.join(self.output_dir, "video-enc.mp4")
-                        cmd = ["fr.handbrake.HandBrakeCLI", "-i", self.video_file, "-e", "x265", "-r", DEFAULT_FRAME_RATE]
-                        if self.encode_bitrate:
-                            cmd.extend(["-b", self.encode_bitrate])
-                        cmd.extend(["-o", out_file])
-                        subprocess.run(cmd)
-                        if os.path.exists(out_file):
-                            os.remove(self.video_file)
-                            os.rename(out_file, self.video_file)
-                    except Exception as ex:
-                        self.logger.error(ex)
 
             if self.sample_duration:
                 (ffmpeg.input(self.video_file).output(sample_file, t=self.sample_duration, c="copy", loglevel="error")
@@ -349,11 +335,8 @@ class Extractor:
         perf_start = time.perf_counter()
 
         try:
-            cmd = ["ffmpeg"]
-            if self.use_gpu:
-                cmd.extend(["-hwaccel", "cuda"])
-            cmd.extend(["-i", self.video_only_file, "-i", self.vocal_file, "-loglevel", "error"])
-            cmd.extend(["-c:v", "copy", "-c:a", "aac", self.video_remix_file, "-y"])
+            cmd = ["ffmpeg", "-i", self.video_only_file, "-i", self.vocal_file]
+            cmd.extend(["-c:v", "copy", "-c:a", "aac", "-loglevel", "error", self.video_remix_file, "-y"])
             subprocess.run(cmd)
         except Exception as ex:
             self.logger.error(f"Remix video and vocal audio with error: {ex}")
@@ -528,8 +511,6 @@ class Extractor:
     def crop_image_by_batch(self, ss: [str]):
         out_files = []
         cmd = ["ffmpeg"]
-        if self.use_gpu:
-            cmd.extend(["-hwaccel", "cuda"])
 
         for s in ss:
             file = self.image_filename(s)
