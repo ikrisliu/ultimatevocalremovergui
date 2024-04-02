@@ -495,18 +495,17 @@ class Extractor:
         return os.path.join(self.screenshot_dir, f"{name:010}.jpg")
 
     def crop_images(self, timecodes: [Timecode]):
-        chunk_size = 1
-        tt = [tc.start for tc in timecodes]
-        chunks = [tt[i:i + chunk_size] for i in range(0, len(tt), chunk_size)]
-
-        perf_start = time.perf_counter()
-        self.logger.info(f"Cropping images base on timecodes by batch size {chunk_size} ...")
-        with multiprocessing.Pool() as pool:
-            img_files = pool.map(self.crop_image_by_batch, chunks)
-        img_files = [file for chunk_file in img_files for file in chunk_file]
-        self.logger.info(f"Cropped images base on timecodes with duration: {run_duration(perf_start)}")
-
-        return img_files
+        # chunk_size = 1
+        # tt = [tc.start for tc in timecodes]
+        # chunks = [tt[i:i + chunk_size] for i in range(0, len(tt), chunk_size)]
+        #
+        # perf_start = time.perf_counter()
+        # self.logger.info(f"Cropping images base on timecodes by batch size {chunk_size} ...")
+        # with multiprocessing.Pool() as pool:
+        #     img_files = pool.map(self.crop_image_by_batch, chunks)
+        # img_files = [file for chunk_file in img_files for file in chunk_file]
+        # self.logger.info(f"Cropped images base on timecodes with duration: {run_duration(perf_start)}")
+        return self.crop_image_by_batch(timecodes)
 
     def crop_image_by_batch(self, ss: [str]):
         out_files = []
