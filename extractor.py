@@ -496,8 +496,7 @@ class Extractor:
 
     def crop_images(self, timecodes: [Timecode]):
         # chunk_size = 1
-        # tt = [tc.start for tc in timecodes]
-        # chunks = [tt[i:i + chunk_size] for i in range(0, len(tt), chunk_size)]
+        # chunks = [timecodes[i:i + chunk_size] for i in range(0, len(timecodes), chunk_size)]
         #
         # perf_start = time.perf_counter()
         # self.logger.info(f"Cropping images base on timecodes by batch size {chunk_size} ...")
@@ -507,14 +506,14 @@ class Extractor:
         # self.logger.info(f"Cropped images base on timecodes with duration: {run_duration(perf_start)}")
         return self.crop_image_by_batch(timecodes)
 
-    def crop_image_by_batch(self, ss: [str]):
+    def crop_image_by_batch(self, timecodes: [Timecode]):
         out_files = []
         cmd = ["ffmpeg"]
 
-        for s in ss:
-            file = self.image_filename(s)
+        for tc in timecodes:
+            file = self.image_filename(tc.start)
             out_files.append(file)
-            start = str(self.cropping_start_time(s))
+            start = str(self.cropping_start_time(tc.start))
             # Minimize the decoding and seeking operations by using the -ss (seek) option `before` the input file
             cmd.extend(["-ss", start, "-i", self.video_file])
             cmd.extend(["-vf", f"crop={self.subtitle_box}", "-vframes", "1", "-loglevel", "error", file, "-y"])
