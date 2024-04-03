@@ -201,7 +201,7 @@ class Extractor:
 
                     cmd.extend(["-filter_complex", filter_complex])
                     cmd.extend(["-map", "[v]", "-map", "[a]"])
-                    cmd.extend(["-c:v", "hevc", "-crf", crf, "-preset", "fast", "-profile:v", "main"])
+                    cmd.extend(["-c:v", "hevc", "-crf", crf, "-preset", "fast", "-profile:v", "main", "-tag:v", "hvc1"])
                     cmd.extend(["-c:a", "aac", "-ar", "44100"])
                 else:
                     cmd.extend(["-f", "concat", "-safe", "0", "-i", list_file])
