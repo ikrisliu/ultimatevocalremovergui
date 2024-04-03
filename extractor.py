@@ -191,7 +191,7 @@ class Extractor:
                     video_res = self.encode_res if self.encode_res else Counter(resolutions).most_common(1)[0][0]
                     video_res = video_res if video_res else "720:1280"
                     video_width = video_res.split(":")[0]
-                    crf = self.encode_crf if self.encode_crf else "21" if video_width == "1080" else "23"
+                    crf = self.encode_crf if self.encode_crf else "28"
 
                     for i in range(len(video_clips)):
                         filter_complex += f"[{i}:v]scale={video_res},setsar=1:1,fps={DEFAULT_FRAME_RATE},setpts=PTS-STARTPTS[v{i}];"
@@ -201,7 +201,7 @@ class Extractor:
 
                     cmd.extend(["-filter_complex", filter_complex])
                     cmd.extend(["-map", "[v]", "-map", "[a]"])
-                    cmd.extend(["-c:v", "h264", "-crf", crf, "-preset", "fast", "-profile:v", "high"])
+                    cmd.extend(["-c:v", "hevc", "-crf", crf, "-preset", "fast", "-profile:v", "main"])
                     cmd.extend(["-c:a", "aac", "-ar", "44100"])
                 else:
                     cmd.extend(["-f", "concat", "-safe", "0", "-i", list_file])
