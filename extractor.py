@@ -201,8 +201,9 @@ class Extractor:
 
                     cmd.extend(["-filter_complex", filter_complex])
                     cmd.extend(["-map", "[v]", "-map", "[a]"])
-                    cmd.extend(["-c:v", "hevc", "-crf", crf, "-preset", "fast", "-profile:v", "main", "-tag:v", "hvc1"])
+                    cmd.extend(["-c:v", "hevc", "-crf", crf, "-preset", "fast", "-profile:v", "main", "-level", "3.1"])
                     cmd.extend(["-c:a", "aac", "-ar", "44100"])
+                    cmd.extend(["-tag:v", "hvc1"])  # for quick look preview on macOS
                 else:
                     cmd.extend(["-f", "concat", "-safe", "0", "-i", list_file])
                     cmd.extend(["-c", "copy"])
