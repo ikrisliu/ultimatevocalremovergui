@@ -70,6 +70,7 @@ class Extractor:
             reencode: bool,
             encode_res: str,
             encode_crf: str,
+            remix: bool,
             preprocess: bool,
             sample_duration: float,
             gen_multi_langs: bool,
@@ -84,6 +85,7 @@ class Extractor:
         self.reencode = reencode
         self.encode_res = encode_res
         self.encode_crf = encode_crf
+        self.remix = remix
         self.preprocess = preprocess
         self.sample_duration = sample_duration
         self.gen_multi_langs = gen_multi_langs
@@ -113,7 +115,8 @@ class Extractor:
             self.merge_videos()
             self.separate_audio()
             self.separate_vocal()
-            self.remix_video()
+            if self.remix:
+                self.remix_video()
 
         tc = self.detect_audio_timecode()
         self.ocr_subtitle(tc)
@@ -230,8 +233,9 @@ class Extractor:
         try:
             # Separate video and audio
             node = ffmpeg.input(self.video_file)
-            node.output(self.video_only_file, an=None, vcodec='copy', loglevel="error").run(overwrite_output=True)
             node.output(audio_tmp_file, vn=None, acodec='copy', loglevel="error").run(overwrite_output=True)
+            if self.remix:
+                node.output(self.video_only_file, an=None, vcodec='copy', loglevel="error").run(overwrite_output=True)
 
             # Normalize the audio to ensure consistent levels
             (ffmpeg.input(audio_tmp_file).output(self.audio_file, af="loudnorm=I=-11:LRA=10:TP=0", loglevel="error")

@@ -35,21 +35,21 @@ def main():
         "--multi_lines_subtitle",
         type=lambda x: (str(x).lower() == "true"),
         default=False,
-        help="Optional: video has multiple lines subtitle (default: %(default)s). Example: --multi_lines_subtitle=True",
+        help="Optional: video has multiple lines subtitle (default: %(default)s). Example: --multi_lines_subtitle=true",
     )
 
     parser.add_argument(
         "--use_gpu",
         type=lambda x: (str(x).lower() == "true"),
         default=True,
-        help="Optional: enable GPU acceleration (default: %(default)s). Example: --use_gpu=False",
+        help="Optional: enable GPU acceleration (default: %(default)s). Example: --use_gpu=false",
     )
 
     parser.add_argument(
         "--reencode",
         type=lambda x: (str(x).lower() == "true"),
         default=False,
-        help="Optional: re-encode the video with libx264 and aac audio (default: %(default)s). Example: --reencode=True",
+        help="Optional: re-encode the video with libx264 and aac audio (default: %(default)s). Example: --reencode=true",
     )
 
     parser.add_argument(
@@ -65,10 +65,17 @@ def main():
     )
 
     parser.add_argument(
+        "--remix",
+        type=lambda x: (str(x).lower() == "true"),
+        default=False,
+        help="Optional: Remix video with audio without BGM (default: %(default)s). Example: --remix=true",
+    )
+
+    parser.add_argument(
         "--preprocess",
         type=lambda x: (str(x).lower() == "true"),
         default=True,
-        help="Optional: Preprocess the video - Merging, Separating (default: %(default)s). Example: --preprocess=False",
+        help="Optional: Preprocess the video - Merging, Separating (default: %(default)s). Example: --preprocess=false",
     )
 
     parser.add_argument(
@@ -81,7 +88,7 @@ def main():
         "--gen_multi_langs",
         type=lambda x: (str(x).lower() == "true"),
         default=False,
-        help="Optional: only generate multi-language subtitles (default: %(default)s). Example: --gen_multi_langs=True",
+        help="Optional: only generate multi-language subtitles (default: %(default)s). Example: --gen_multi_langs=true",
     )
 
     parser.add_argument(
@@ -112,6 +119,7 @@ def main():
         reencode=args.reencode,
         encode_res=args.encode_res,
         encode_crf=args.encode_crf,
+        remix=args.remix,
         preprocess=args.preprocess,
         sample_duration=args.sample_duration,
         gen_multi_langs=args.gen_multi_langs,
